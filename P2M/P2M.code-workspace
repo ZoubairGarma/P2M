@@ -1,8 +1,11 @@
 {
 	"folders": [
 		{
-			"name": "P2M",
 			"path": "."
+		},
+		{
+			"name": "P2M",
+			"path": "../../Documents/PlatformIO/Projects/P2M"
 		}
 	],
 	"settings": {}
