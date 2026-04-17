@@ -9,7 +9,7 @@
 
 // --- TES IDENTIFIANTS THINGER.IO ---
 #define USERNAME "inesss"
-#define DEVICE_ID "cameraa" // ou cameraa
+#define DEVICE_ID "cameraa"
 #define DEVICE_CREDENTIAL "cameraa"
 
 // --- VARIABLES GLOBALES ---
