@@ -1,11 +1,19 @@
 #pragma once
 
+#include <Arduino.h>
 #include <WebServer.h>
 
 // --- DECLARATION DES VARIABLES PARTAGEES ---
 extern const char* ssid;
 extern const char* password;
 extern WebServer server;
+extern bool accessGranted;
+extern unsigned long accessGrantedTimestamp;
+extern bool rfidDetected;
+extern unsigned long rfidDetectedTimestamp;
+
+#define ACCESS_GRANT_DURATION_MS 10000
+#define RFID_STATUS_DURATION_MS 10000
 
 // --- BROCHES DE LA CAMERA AI-THINKER ---
 #define PWDN_GPIO_NUM     32

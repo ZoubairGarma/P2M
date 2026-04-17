@@ -1,14 +1,23 @@
 #include "camera.h"
 #include "config.h"
-#include <Arduino.h>
-#include <WebServer.h>
 #include "esp_camera.h"
+#include <WebServer.h> // On ajoute la bibliothèque du serveur
+
+// NOUVEAU : On prévient ce fichier que "server" existe déjà dans main.cpp
+extern WebServer server;
+
 
 void initialiserCamera() {
-  Serial.println("Initialisation de la camera...");
+  Serial.println("Initialisation caméra...");
+
   camera_config_t config;
+  
+  // Rétrocompatibilité
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR < 3
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
+#endif
+
   config.pin_d0 = Y2_GPIO_NUM;
   config.pin_d1 = Y3_GPIO_NUM;
   config.pin_d2 = Y4_GPIO_NUM;
@@ -27,33 +36,52 @@ void initialiserCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  
+
   if(psramFound()){
-    config.frame_size = FRAMESIZE_VGA; 
+    config.frame_size = FRAMESIZE_VGA;
     config.jpeg_quality = 10;
     config.fb_count = 2;
   } else {
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 12;
     config.fb_count = 1;
   }
 
-  esp_camera_init(&config);
+  if (esp_camera_init(&config) != ESP_OK) {
+    Serial.println("Erreur init caméra !");
+    return;
+  }
 }
 
 void capturePhoto() {
-  camera_fb_t * fb = esp_camera_fb_get(); 
-  if (!fb) {
-    Serial.println("Erreur: Echec de la capture");
-    server.send(500, "text/plain", "Erreur de la camera");
+  Serial.println(">>> Page Web demandée ! Prise de photo...");
+  if (!accessGranted || millis() - accessGrantedTimestamp > ACCESS_GRANT_DURATION_MS) {
+    accessGranted = false;
+    Serial.println("Accès refusé : autorisation manquante ou expirée.");
+    server.send(403, "text/plain", "Access denied");
     return;
   }
-  server.send_P(200, "image/jpeg", (const char *)fb->buf, fb->len);
-  esp_camera_fb_return(fb); 
-  Serial.println("Photo capturee et envoyee au PC !");
-}
+  accessGranted = false;
+  camera_fb_t * fb = esp_camera_fb_get();
 
-void actionCapteurIR() {
-  Serial.println("!!! ALERTE : CAPTEUR IR DU COLLEGUE DECLENCHE !!!");
-  server.send(200, "text/plain", "Ordre recu par la camera !");
+  if (!fb) {
+    Serial.println("Erreur capture");
+    server.send(500, "text/plain", "Erreur camera");
+    return;
+  }
+
+  // MÉTHODE ROBUSTE : On écrit directement dans le flux du client
+  WiFiClient client = server.client();
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: image/jpeg");
+  client.print("Content-Length: ");
+  client.println(fb->len);
+  client.println(); // Ligne vide obligatoire en HTTP
+  
+  // Envoi du buffer binaire
+  client.write(fb->buf, fb->len);
+
+  esp_camera_fb_return(fb);
+
+  Serial.println("Photo envoyée avec succès !");
 }
