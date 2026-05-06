@@ -5,7 +5,7 @@
 #include <HTTPClient.h>
 
 // REPLACE THIS WITH YOUR ESP32-CAM'S ACTUAL IP ADDRESS
-String camIP = "10.169.58.1";
+String camIP = "10.32.245.1";
 
 bool faceMatched = false;
 

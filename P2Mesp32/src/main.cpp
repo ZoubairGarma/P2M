@@ -7,8 +7,8 @@
 #include "blynk_manager.h"   // Added Blynk
 #include "camera_comms.h"    // Added Camera
 
-const char* ssid = "bartage";
-const char* password = "zoubaxd55"; 
+const char* password = "zoubaxd55";
+const char* ssid = "bartage"; 
 
 // System state tracking
 bool waitingForScan = false;
