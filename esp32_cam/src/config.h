@@ -14,6 +14,12 @@ extern unsigned long rfidDetectedTimestamp;
 
 #define ACCESS_GRANT_DURATION_MS 10000
 #define RFID_STATUS_DURATION_MS 10000
+#define PHOTO_CAPTURE_DURATION_MS 5000  // Durée de capture en série après détection RFID (5 secondes)
+#define PHOTO_INTERVAL_MS 500           // Intervalle entre chaque photo (500ms = 2 photos/sec)
+
+// Variables pour la capture en série
+extern bool captureSeriesActive;
+extern unsigned long captureSeriesStartTime;
 
 // --- BROCHES DE LA CAMERA AI-THINKER ---
 #define PWDN_GPIO_NUM     32

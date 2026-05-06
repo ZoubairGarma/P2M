@@ -2,11 +2,43 @@
 #include "config.h"
 #include "esp_camera.h"
 #include <WebServer.h> // On ajoute la bibliothèque du serveur
-
+#include <ThingerESP32.h> // On ajoute la bibliothèque Thinger.io
 // NOUVEAU : On prévient ce fichier que "server" existe déjà dans main.cpp
 extern WebServer server;
 
+extern ThingerESP32 thing;
+extern String derniereImageBase64;
 
+// Fonction base64 encode simple
+String base64_encode(const uint8_t* data, size_t len) {
+  const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  String encoded = "";
+  int i = 0;
+  int j = 0;
+  uint8_t char_array_3[3];
+  uint8_t char_array_4[4];
+  while (len--) {
+    char_array_3[i++] = *(data++);
+    if (i == 3) {
+      char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+      char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+      char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+      char_array_4[3] = char_array_3[2] & 0x3f;
+      for(i = 0; i < 4; i++) encoded += base64_chars[char_array_4[i]];
+      i = 0;
+    }
+  }
+  if (i) {
+    for(j = i; j < 3; j++) char_array_3[j] = '\0';
+    char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+    char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+    char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+    char_array_4[3] = char_array_3[2] & 0x3f;
+    for (j = 0; j < i + 1; j++) encoded += base64_chars[char_array_4[j]];
+    while((i++ < 3)) encoded += '=';
+  }
+  return encoded;
+}
 void initialiserCamera() {
   Serial.println("Initialisation caméra...");
 
@@ -38,7 +70,7 @@ void initialiserCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
 
   if(psramFound()){
-    config.frame_size = FRAMESIZE_VGA;
+    config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 10;
     config.fb_count = 2;
   } else {
@@ -54,15 +86,10 @@ void initialiserCamera() {
 }
 
 void capturePhoto() {
-  Serial.println(">>> Page Web demandée ! Prise de photo...");
-  if (!accessGranted || millis() - accessGrantedTimestamp > ACCESS_GRANT_DURATION_MS) {
-    accessGranted = false;
-    Serial.println("Accès refusé : autorisation manquante ou expirée.");
-    server.send(403, "text/plain", "Access denied");
-    return;
-  }
-  accessGranted = false;
+  Serial.println(">>> WROVER requested photo! Taking picture...");
+  
   camera_fb_t * fb = esp_camera_fb_get();
+  
 
   if (!fb) {
     Serial.println("Erreur capture");
@@ -70,18 +97,46 @@ void capturePhoto() {
     return;
   }
 
-  // MÉTHODE ROBUSTE : On écrit directement dans le flux du client
-  WiFiClient client = server.client();
-  client.println("HTTP/1.1 200 OK");
-  client.println("Content-Type: image/jpeg");
-  client.print("Content-Length: ");
-  client.println(fb->len);
-  client.println(); // Ligne vide obligatoire en HTTP
+  // ------------------------------------------------------------------
+  // LA MAGIE THINGER.IO (NO REFRESH NEEDED)
+  // ------------------------------------------------------------------
+  Serial.println("Envoi de l'image vers Thinger.io en temps reel...");
+  // This pushes the binary image directly to a property called "Gate_Photo"
+  String b64 = "data:image/jpeg;base64," + base64_encode(fb->buf, fb->len);
+  protoson::pson data = b64.c_str();
+  thing.set_property("image", data);
   
-  // Envoi du buffer binaire
-  client.write(fb->buf, fb->len);
+  // ------------------------------------------------------------------
+  // REPONDRE AU WROVER
+  // ------------------------------------------------------------------
+  // Your WROVER is specifically waiting for the word "FACE_OK" to open the gate!
+  server.send(200, "text/plain", "FACE_OK");
 
   esp_camera_fb_return(fb);
+  Serial.println("Photo poussée et WROVER autorisé !");
+}
 
-  Serial.println("Photo envoyée avec succès !");
+// ============================================
+// 📸 NOUVELLE FONCTION: Capture automatique
+// ============================================
+// Appelée automatiquement lors de la détection RFID
+// (pas besoin d'une requête HTTP manuelle)
+void capturePhotoAutomatic() {
+  camera_fb_t * fb = esp_camera_fb_get();
+  
+  if (!fb) {
+    Serial.println("❌ Erreur capture automatique");
+    return;
+  }
+
+  Serial.printf("📸 Photo auto #%d [%d bytes] → Thinger.io\n", 
+                (millis() - captureSeriesStartTime) / PHOTO_INTERVAL_MS, fb->len);
+
+  // Encoder et envoyer à Thinger.io
+  String b64 = "data:image/jpeg;base64," + base64_encode(fb->buf, fb->len);
+  derniereImageBase64 = b64;
+  protoson::pson data = b64.c_str();
+  thing.set_property("image", data);
+
+  esp_camera_fb_return(fb);
 }
