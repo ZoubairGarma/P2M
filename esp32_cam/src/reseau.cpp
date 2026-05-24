@@ -92,27 +92,30 @@ void initialiserServeurWeb() {
   });
   
   // ============================================
-  // 🔐 MAIN AUTHORIZATION ENDPOINT (CORRECTED)
+  // 🔐 MAIN AUTHORIZATION ENDPOINT (COMPLETELY CORRECTED)
   // ============================================
   server.on("/authorize", HTTP_GET, []() {
     Serial.println("\n🚀 Endpoint /authorize appelé par WROVER!");
     
     unsigned long recognitionStartTime = millis();
     
-    // FIX: Capture photo
+    // ============================================
+    // STEP 1: Capture photo
+    // ============================================
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("❌ Erreur capture");
-      // FIX: Return 500 (server error), not 200
       server.send(500, "text/plain", "Camera capture failed");
-      return;  // fb is already NULL, safe to return
+      return;  // fb is NULL, safe to return
     }
     
-    // FIX: Timeout-wrapped face recognition
+    // ============================================
+    // STEP 2: Generate hash
+    // ============================================
     uint8_t* hash = generateFaceHash(fb);
     if (hash == nullptr) {
       Serial.println("❌ Erreur génération hash");
-      esp_camera_fb_return(fb);  // FIX: Properly return frame buffer
+      esp_camera_fb_return(fb);  // FIX: Return frame buffer on error
       server.send(500, "text/plain", "Face hash generation failed");
       return;
     }
@@ -120,27 +123,41 @@ void initialiserServeurWeb() {
     unsigned long hashTime = millis() - recognitionStartTime;
     if (hashTime > MAX_FACE_RECOGNITION_TIME_MS) {
       Serial.println("⏰ Face hash generation timeout!");
-      if (hash) free(hash);  // FIX: Explicit null-safe free
-      esp_camera_fb_return(fb);
-      // FIX: Return 202 Accepted (processing took too long) or 500 (server error)
+      // FIX: CRITICAL - Proper PSRAM cleanup!
+      if (hash) {
+        if (psramFound()) {
+          ps_free(hash);  // Use ps_free for PSRAM-allocated memory!
+        } else {
+          free(hash);
+        }
+      }
+      esp_camera_fb_return(fb);  // Always return frame buffer
       server.send(500, "text/plain", "Face processing timeout");
       return;
     }
     
-    // Recognize face
+    // ============================================
+    // STEP 3: Recognize face
+    // ============================================
     int faceIndex = recognizeFace(hash);
     unsigned long totalTime = millis() - recognitionStartTime;
     
     Serial.printf("Face recognition completed in %ld ms\n", totalTime);
     
+    // ============================================
+    // STEP 4: Handle result
+    // ============================================
     if (faceIndex >= 0) {
-      // Visage reconnu
+      // Visage reconnu ✅
       FaceSignature face;
       if (!loadFaceFromNVS(faceIndex, &face)) {
         Serial.println("❌ Erreur chargement face NVS");
-        if (hash) free(hash);  // FIX: Null-safe free
+        // FIX: CRITICAL - Cleanup on all error paths!
+        if (hash) {
+          if (psramFound()) ps_free(hash);
+          else free(hash);
+        }
         esp_camera_fb_return(fb);
-        // FIX: Return proper error code
         server.send(500, "text/plain", "Face load from NVS failed");
         return;
       }
@@ -151,13 +168,19 @@ void initialiserServeurWeb() {
       String msg = "✅ Accès accordé à " + String(face.name);
       sendTelegramMessage(msg);
       
-      // FIX: Return 200 OK for success, with meaningful body
-      if (hash) free(hash);  // FIX: Null-safe free
+      // FIX: CRITICAL - Cleanup BEFORE sending response
+      if (hash) {
+        if (psramFound()) ps_free(hash);  // Use correct free function!
+        else free(hash);
+      }
       esp_camera_fb_return(fb);
-      delay(100);  // FIX: Let system settle before next request
+      
+      delay(50);  // Let PSRAM settle before next request
+      
+      // FIX: Return 200 OK for success
       server.send(200, "text/plain", "FACE_OK");
     } else {
-      // Visage inconnu - ALERTE
+      // Visage inconnu - ALERTE ❌
       Serial.println("⚠️  VISAGE INCONNU - ALERTE");
       
       // Envoyer photo à Thinger
@@ -169,10 +192,16 @@ void initialiserServeurWeb() {
       // Telegram alerte
       sendTelegramMessage("⚠️ ALERTE: Inconnu détecté! Photo enregistrée.");
       
-      // FIX: Return 401 Unauthorized for face not recognized
-      if (hash) free(hash);  // FIX: Null-safe free
+      // FIX: CRITICAL - Cleanup BEFORE sending response
+      if (hash) {
+        if (psramFound()) ps_free(hash);  // Use correct free function!
+        else free(hash);
+      }
       esp_camera_fb_return(fb);
-      delay(100);  // FIX: Let system settle before next request
+      
+      delay(50);  // Let PSRAM settle before next request
+      
+      // FIX: Return 401 Unauthorized for face not recognized
       server.send(401, "text/plain", "FACE_UNKNOWN");
     }
   });

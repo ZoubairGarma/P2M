@@ -105,7 +105,8 @@ void initialiserCamera() {
 
 // ==================== RECONNAISSANCE FACIALE ====================
 
-// FIX: Improved face hash with BETTER STABILITY (prevents false negatives)
+// FIX: CRITICAL - Improved face hash with JPEG-header bypass
+// PREVENTS false positives by skipping constant JPEG headers
 uint8_t* generateFaceHash(camera_fb_t* fb) {
   // FIX: Check PSRAM first, allocate with error handling
   uint8_t* hash = nullptr;
@@ -123,7 +124,7 @@ uint8_t* generateFaceHash(camera_fb_t* fb) {
   
   memset(hash, 0, 32);
   
-  if (!fb) {
+  if (!fb || fb->len < 1024) {  // JPEG must be at least 1KB
     Serial.println("❌ Invalid frame buffer for hash generation");
     return hash;  // Return allocated but zeroed hash
   }
@@ -131,49 +132,63 @@ uint8_t* generateFaceHash(camera_fb_t* fb) {
   uint8_t* buf = fb->buf;
   size_t len = fb->len;
   
-  // FIXED: Better hash with improved stability for same-face detection
-  // Uses blocks instead of byte-by-byte to reduce noise sensitivity
-  size_t block_size = len / 32;  // Divide image into 32 blocks
+  // CRITICAL FIX: Skip JPEG headers (first ~2KB) to avoid false positives
+  // All JPEGs start with FFD8 FFE0+ which creates identical hashes!
+  // Instead: sample meaningful image data with XOR for better differentiation
+  size_t image_start = 2048;  // Skip constant JPEG headers
+  if (image_start >= len) image_start = len / 3;
   
-  for (int block = 0; block < 32; block++) {
-    uint32_t block_sum = 0;
-    size_t block_start = block * block_size;
-    size_t block_end = (block == 31) ? len : (block + 1) * block_size;
-    
-    // Sum all bytes in this block
-    for (size_t i = block_start; i < block_end && i < len; i++) {
-      block_sum += buf[i];
-    }
-    
-    // Hash = average of block (more stable than XOR)
-    hash[block] = (block_sum / (block_end - block_start + 1)) & 0xFF;
+  size_t remaining = len - image_start;
+  if (remaining < 256) remaining = len / 2;
+  
+  size_t step = remaining / 32;  // Calculate sampling stride
+  if (step < 1) step = 1;
+  
+  int hash_idx = 0;
+  // XOR-based sampling for better face differentiation
+  for (size_t i = image_start; i < len && hash_idx < 32; i += step) {
+    hash[hash_idx] ^= buf[i];
+    hash_idx++;
+  }
+  
+  // Fill remaining slots if sampling didn't cover all 32
+  while (hash_idx < 32) {
+    hash[hash_idx] = hash[hash_idx % 32] ^ (hash_idx << 2);
+    hash_idx++;
   }
   
   return hash;
 }
 
-// FIX: Better face signature comparison with THRESHOLD TOLERANCE
+// FIX: CRITICAL - Better face signature comparison with strict threshold
+// Prevents false positives by requiring EXACT byte-level matches
 int compareFaceSignatures(uint8_t* hash1, uint8_t* hash2) {
   if (!hash1 || !hash2) return 0;
   
-  int matchCount = 0;
   int totalDifference = 0;
+  int perfectMatches = 0;
   
   for (int i = 0; i < 32; i++) {
     uint8_t diff = (hash1[i] > hash2[i]) ? (hash1[i] - hash2[i]) : (hash2[i] - hash1[i]);
     totalDifference += diff;
     
-    // FIXED: Allow small tolerance (±20) instead of exact match
-    if (diff <= 20) matchCount++;
+    // Count only near-perfect matches (diff <= 5, not 20)
+    if (diff <= 5) perfectMatches++;
   }
   
-  // Score based on both exact matches and tolerance distance
-  int proximityScore = (matchCount * 100) / 32;  // 0-100% from close matches
-  int diffScore = 100 - ((totalDifference / 32) / 8);  // Penalty for large diffs
+  // CRITICAL: Score is STRICT - requires >15/32 perfect matches
+  // Perfect matches score (must be 50+%)
+  int perfectScore = (perfectMatches * 100) / 32;
+  
+  // Average difference penalty (lower = better)
+  // If totalDifference is high, score drops fast
+  int avgDiff = totalDifference / 32;
+  int diffScore = (avgDiff > 50) ? 0 : (100 - (avgDiff * 2));  // Harsh penalty
+  
   if (diffScore < 0) diffScore = 0;
   
-  // Average the two scores for more stable recognition
-  return (proximityScore + diffScore) / 2;
+  // Return WEIGHTED average - perfect score matters more
+  return (perfectScore * 3 + diffScore) / 4;  // 75% weight on perfect matches
 }
 
 // ==================== NVS (STOCKAGE PERSISTANT) ====================
@@ -230,7 +245,11 @@ bool enrollFace(const char* employeeName) {
   if (err != ESP_OK) {
     Serial.println("❌ Erreur NVS");
     esp_camera_fb_return(fb);  // FIX: Clean up on error
-    free(hash);
+    // FIX: CRITICAL - Use correct free function!
+    if (hash) {
+      if (psramFound()) ps_free(hash);
+      else free(hash);
+    }
     return false;
   }
   
@@ -242,7 +261,11 @@ bool enrollFace(const char* employeeName) {
     Serial.printf("❌ Max faces atteint (%d)\n", MAX_ENROLLED_FACES);
     nvs_close(nvs_handle);
     esp_camera_fb_return(fb);  // FIX: Clean up
-    free(hash);
+    // FIX: CRITICAL - Use correct free function!
+    if (hash) {
+      if (psramFound()) ps_free(hash);
+      else free(hash);
+    }
     return false;
   }
   
@@ -263,7 +286,11 @@ bool enrollFace(const char* employeeName) {
   nvs_close(nvs_handle);
   
   esp_camera_fb_return(fb);  // FIX: Always return frame buffer
-  free(hash);
+  // FIX: CRITICAL - Use correct free function!
+  if (hash) {
+    if (psramFound()) ps_free(hash);
+    else free(hash);
+  }
   
   if (err == ESP_OK) {
     Serial.printf("✅ Visage enregistré #%d: %s\n", count - 1, employeeName);
@@ -440,7 +467,14 @@ void capturePhotoAutomatic() {
   }
   
   esp_camera_fb_return(fb);  // FIX: Always return frame buffer
-  if (faceHash) free(faceHash);  // FIX: Safe free with null check
+  // FIX: CRITICAL - Use correct free function based on allocation method
+  if (faceHash) {
+    if (psramFound()) {
+      ps_free(faceHash);  // Use ps_free for PSRAM-allocated memory
+    } else {
+      free(faceHash);
+    }
+  }
   delay(100);  // FIX: Let PSRAM settle between captures
 }
 

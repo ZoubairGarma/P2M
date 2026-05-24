@@ -18,6 +18,7 @@ bool previousRfidDetected = false;
 // Variables pour la capture en série
 bool captureSeriesActive = false;
 unsigned long captureSeriesStartTime = 0;
+unsigned long lastCaptureTime = 0;  // FIX: GLOBAL variable instead of static!
 
 // Variables pour enrôlement (reconnaissance faciale)
 bool enrollMode = false;
@@ -113,21 +114,31 @@ void loop() {
   }
   
   // ============================================
-  // 📸 GESTION DES CAPTURES EN SÉRIE
+  // 📸 GESTION DES CAPTURES EN SÉRIE (FIX: No static, proper state reset)
   // ============================================
   if (captureSeriesActive) {
     unsigned long elapsedTime = millis() - captureSeriesStartTime;
     
+    // FIX: Initialize lastCaptureTime on FIRST entry
+    if (elapsedTime < 100) {
+      lastCaptureTime = millis();
+    }
+    
     if (elapsedTime < PHOTO_CAPTURE_DURATION_MS) {
-      static unsigned long lastCaptureTime = 0;
+      // FIX: Use GLOBAL lastCaptureTime instead of static
       if (millis() - lastCaptureTime >= PHOTO_INTERVAL_MS) {
         capturePhotoAutomatic();
-        lastCaptureTime = millis();
+        lastCaptureTime = millis();  // Reset immediately after capture
       }
     } else {
+      // SERIES COMPLETE - CLEANUP ALL STATE
       captureSeriesActive = false;
       enrollMode = false;
-      Serial.println("✔️  Série de captures terminée!");
+      rfidDetected = false;  // FIX: CLEAR RFID FLAG!
+      rfidDetectedTimestamp = 0;  // FIX: CLEAR TIMESTAMP!
+      previousRfidDetected = false;  // Reset tracking
+      lastCaptureTime = 0;  // FIX: Reset capture timer
+      Serial.println("✔️  Série de captures terminée! État réinitialisé.");
     }
   }
 }
