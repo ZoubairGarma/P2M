@@ -1,0 +1,12 @@
+// include/state_machine.h
+#pragma once
+
+enum SystemState {
+  STATE_IDLE,
+  STATE_CAR_DETECTED,
+  STATE_RFID_SCANNED,
+  STATE_REQUESTING_CAM,
+  STATE_WAITING_CAM,
+  STATE_ACCESS_GRANTED,
+  STATE_ACCESS_DENIED
+};

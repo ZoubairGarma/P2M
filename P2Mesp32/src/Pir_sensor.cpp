@@ -5,6 +5,7 @@
 const int PIR_PIN = 12 ; // Replace with your actual pin
 unsigned long lastMotionTime = 0;
 const unsigned long cooldownTime = 10000; // 10 seconds between alerts
+static bool motionAlertActive = false;
 
 void setupPIR() {
   pinMode(PIR_PIN, INPUT);
@@ -13,12 +14,16 @@ void setupPIR() {
 
 void handlePIR() {
   if (digitalRead(PIR_PIN) == HIGH) {
-    // Check if 10 seconds have passed since the last alert
-    if (millis() - lastMotionTime > cooldownTime) {
+    // Send one alert per motion event, then only re-alert after cooldown
+    if (!motionAlertActive || millis() - lastMotionTime > cooldownTime) {
       sendMotionAlert(); // Fire the Blynk alert
+      motionAlertActive = true;
       lastMotionTime = millis(); // Reset the timer
     }
   } else {
-    clearMotionAlert(); // Turn off the Blynk LED if no motion
+    if (motionAlertActive) {
+      clearMotionAlert(); // Turn off the Blynk LED if no motion
+      motionAlertActive = false;
+    }
   }
 }

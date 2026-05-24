@@ -1,3 +1,4 @@
+
 #include "reseau.h"
 #include <WiFi.h>
 #include "config.h"
@@ -84,4 +85,5 @@ void initialiserServeurWeb() {
   
   server.begin();
   Serial.println("Serveur HTTP lancé !");
+}
 }
