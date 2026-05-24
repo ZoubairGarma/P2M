@@ -127,6 +127,11 @@ void setup() {
   // 4. Print memory info
   Serial.println("\n📊 System Ready!");
   printCameraCommMemory();
+  
+  // 5. TEST CAMERA CONNECTIVITY (DIAGNOSTIC)
+  delay(2000);  // Give camera time to boot
+  testCameraConnection();
+  
   Serial.println("⏳ Waiting for car...\n");
 }
 

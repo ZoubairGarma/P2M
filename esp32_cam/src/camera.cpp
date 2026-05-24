@@ -167,28 +167,39 @@ int compareFaceSignatures(uint8_t* hash1, uint8_t* hash2) {
   
   int totalDifference = 0;
   int perfectMatches = 0;
+  int goodMatches = 0;  // diff <= 15
   
   for (int i = 0; i < 32; i++) {
     uint8_t diff = (hash1[i] > hash2[i]) ? (hash1[i] - hash2[i]) : (hash2[i] - hash1[i]);
     totalDifference += diff;
     
-    // Count only near-perfect matches (diff <= 5, not 20)
+    // Count near-perfect matches (diff <= 5)
     if (diff <= 5) perfectMatches++;
+    
+    // Count good matches (diff <= 15)
+    if (diff <= 15) goodMatches++;
   }
   
-  // CRITICAL: Score is STRICT - requires >15/32 perfect matches
-  // Perfect matches score (must be 50+%)
+  // IMPROVED: Less strict scoring
+  // Perfect matches score (contribution: 40%)
   int perfectScore = (perfectMatches * 100) / 32;
   
-  // Average difference penalty (lower = better)
-  // If totalDifference is high, score drops fast
+  // Good matches score (contribution: 40%)
+  int goodScore = (goodMatches * 100) / 32;
+  
+  // Average difference penalty (contribution: 20%)
   int avgDiff = totalDifference / 32;
-  int diffScore = (avgDiff > 50) ? 0 : (100 - (avgDiff * 2));  // Harsh penalty
+  int diffScore = (avgDiff > 80) ? 0 : (100 - avgDiff);
   
   if (diffScore < 0) diffScore = 0;
   
-  // Return WEIGHTED average - perfect score matters more
-  return (perfectScore * 3 + diffScore) / 4;  // 75% weight on perfect matches
+  // More lenient weighting
+  int finalScore = (perfectScore * 2 + goodScore * 2 + diffScore) / 5;
+  
+  Serial.printf("    [Score: perfect=%d%% good=%d%% diff=%d final=%d%%]\n", 
+                perfectScore, goodScore, avgDiff, finalScore);
+  
+  return finalScore;
 }
 
 // ==================== NVS (STOCKAGE PERSISTANT) ====================
@@ -382,10 +393,14 @@ void listAllEnrolledFaces() {
 
 void sendTelegramMessage(const String& message) {
   clientSecure.setInsecure();
+  
+  // FIX: Add timeout protection to prevent blocking
+  clientSecure.setTimeout(3000);  // 3 second timeout
+  
   if (bot.sendMessage(CHAT_ID, message, "")) {
     Serial.println("✅ Message Telegram envoyé");
   } else {
-    Serial.println("❌ Erreur envoi Telegram");
+    Serial.println("⚠️  Telegram failed or timeout");
   }
 }
 

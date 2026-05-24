@@ -21,6 +21,7 @@ bool isFaceAuthorized(); // Check if face was authorized
 CameraCommState getCameraCommState(); // Get current state
 void resetCameraComm(); // Reset state machine
 void cleanupHTTP(); // Cleanup HTTP client
+void testCameraConnection(); // Diagnostic: Test connectivity to ESP32-CAM
 
 // Memory optimization
 void printCameraCommMemory();
