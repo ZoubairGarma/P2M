@@ -26,7 +26,7 @@ extern unsigned long rfidDetectedTimestamp;
 #define FACE_SIGNATURE_SIZE 32  // Taille du hash du visage
 #define NVS_NAMESPACE "faces"
 #define NVS_FACES_COUNT_KEY "count"
-#define MIN_FACE_MATCH_SCORE 75  // % de similarité requise (0-100)
+#define MIN_FACE_MATCH_SCORE 92  // % de similarité requise (0-100) - FIXED: was 75 (too low, caused false positives)
 
 // Variables pour la capture en série
 extern bool captureSeriesActive;

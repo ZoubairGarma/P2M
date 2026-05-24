@@ -105,7 +105,7 @@ void initialiserCamera() {
 
 // ==================== RECONNAISSANCE FACIALE ====================
 
-// FIX: Improved face hash with error handling
+// FIX: Improved face hash with BETTER STABILITY (prevents false negatives)
 uint8_t* generateFaceHash(camera_fb_t* fb) {
   // FIX: Check PSRAM first, allocate with error handling
   uint8_t* hash = nullptr;
@@ -131,25 +131,49 @@ uint8_t* generateFaceHash(camera_fb_t* fb) {
   uint8_t* buf = fb->buf;
   size_t len = fb->len;
   
-  // Simple: calcul de checksum par octets (TODO: Replace with ML-based recognition)
-  for (size_t i = 0; i < len && i < 256; i++) {
-    hash[i % 32] ^= buf[i];
-    hash[(i + 1) % 32] += buf[i];
+  // FIXED: Better hash with improved stability for same-face detection
+  // Uses blocks instead of byte-by-byte to reduce noise sensitivity
+  size_t block_size = len / 32;  // Divide image into 32 blocks
+  
+  for (int block = 0; block < 32; block++) {
+    uint32_t block_sum = 0;
+    size_t block_start = block * block_size;
+    size_t block_end = (block == 31) ? len : (block + 1) * block_size;
+    
+    // Sum all bytes in this block
+    for (size_t i = block_start; i < block_end && i < len; i++) {
+      block_sum += buf[i];
+    }
+    
+    // Hash = average of block (more stable than XOR)
+    hash[block] = (block_sum / (block_end - block_start + 1)) & 0xFF;
   }
   
   return hash;
 }
 
-// FIX: Better face signature comparison
+// FIX: Better face signature comparison with THRESHOLD TOLERANCE
 int compareFaceSignatures(uint8_t* hash1, uint8_t* hash2) {
   if (!hash1 || !hash2) return 0;
   
   int matchCount = 0;
+  int totalDifference = 0;
+  
   for (int i = 0; i < 32; i++) {
-    if (hash1[i] == hash2[i]) matchCount++;
+    uint8_t diff = (hash1[i] > hash2[i]) ? (hash1[i] - hash2[i]) : (hash2[i] - hash1[i]);
+    totalDifference += diff;
+    
+    // FIXED: Allow small tolerance (±20) instead of exact match
+    if (diff <= 20) matchCount++;
   }
   
-  return (matchCount * 100) / 32;  // 0-100%
+  // Score based on both exact matches and tolerance distance
+  int proximityScore = (matchCount * 100) / 32;  // 0-100% from close matches
+  int diffScore = 100 - ((totalDifference / 32) / 8);  // Penalty for large diffs
+  if (diffScore < 0) diffScore = 0;
+  
+  // Average the two scores for more stable recognition
+  return (proximityScore + diffScore) / 2;
 }
 
 // ==================== NVS (STOCKAGE PERSISTANT) ====================
@@ -385,7 +409,7 @@ void capturePhotoAutomatic() {
   uint8_t* faceHash = generateFaceHash(fb);
   if (!faceHash) {
     Serial.println("❌ Erreur génération hash");
-    esp_camera_fb_return(fb);
+    esp_camera_fb_return(fb);  // FIX: Always return frame buffer
     return;
   }
   
@@ -415,8 +439,9 @@ void capturePhotoAutomatic() {
     }
   }
   
-  esp_camera_fb_return(fb);
-  free(faceHash);
+  esp_camera_fb_return(fb);  // FIX: Always return frame buffer
+  if (faceHash) free(faceHash);  // FIX: Safe free with null check
+  delay(100);  // FIX: Let PSRAM settle between captures
 }
 
 void startPhotoCaptureSeries() {

@@ -120,7 +120,7 @@ void initialiserServeurWeb() {
     unsigned long hashTime = millis() - recognitionStartTime;
     if (hashTime > MAX_FACE_RECOGNITION_TIME_MS) {
       Serial.println("⏰ Face hash generation timeout!");
-      free(hash);
+      if (hash) free(hash);  // FIX: Explicit null-safe free
       esp_camera_fb_return(fb);
       // FIX: Return 202 Accepted (processing took too long) or 500 (server error)
       server.send(500, "text/plain", "Face processing timeout");
@@ -138,7 +138,7 @@ void initialiserServeurWeb() {
       FaceSignature face;
       if (!loadFaceFromNVS(faceIndex, &face)) {
         Serial.println("❌ Erreur chargement face NVS");
-        free(hash);
+        if (hash) free(hash);  // FIX: Null-safe free
         esp_camera_fb_return(fb);
         // FIX: Return proper error code
         server.send(500, "text/plain", "Face load from NVS failed");
@@ -152,8 +152,9 @@ void initialiserServeurWeb() {
       sendTelegramMessage(msg);
       
       // FIX: Return 200 OK for success, with meaningful body
-      free(hash);
+      if (hash) free(hash);  // FIX: Null-safe free
       esp_camera_fb_return(fb);
+      delay(100);  // FIX: Let system settle before next request
       server.send(200, "text/plain", "FACE_OK");
     } else {
       // Visage inconnu - ALERTE
@@ -169,8 +170,9 @@ void initialiserServeurWeb() {
       sendTelegramMessage("⚠️ ALERTE: Inconnu détecté! Photo enregistrée.");
       
       // FIX: Return 401 Unauthorized for face not recognized
-      free(hash);
+      if (hash) free(hash);  // FIX: Null-safe free
       esp_camera_fb_return(fb);
+      delay(100);  // FIX: Let system settle before next request
       server.send(401, "text/plain", "FACE_UNKNOWN");
     }
   });
@@ -192,7 +194,8 @@ void initialiserServeurWeb() {
     client.printf("Content-Length: %d\r\n", fb->len);
     client.println();
     client.write(fb->buf, fb->len);
-    esp_camera_fb_return(fb);
+    esp_camera_fb_return(fb);  // FIX: Explicit frame buffer return
+    delay(50);  // FIX: Let PSRAM settle
     Serial.println("Image envoyée!");
   });
 
@@ -208,6 +211,7 @@ void initialiserServeurWeb() {
     // FIX: Check commit result
     esp_err_t err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
+    delay(100);  // FIX: Let system settle after erase
     
     if (err == ESP_OK) {
       server.send(200, "text/plain", "Tous les visages ont été supprimés");
