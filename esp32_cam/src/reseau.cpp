@@ -123,14 +123,8 @@ void initialiserServeurWeb() {
     unsigned long hashTime = millis() - recognitionStartTime;
     if (hashTime > MAX_FACE_RECOGNITION_TIME_MS) {
       Serial.println("⏰ Face hash generation timeout!");
-      // FIX: CRITICAL - Proper PSRAM cleanup!
-      if (hash) {
-        if (psramFound()) {
-          ps_free(hash);  // Use ps_free for PSRAM-allocated memory!
-        } else {
-          free(hash);
-        }
-      }
+      // FIX: CRITICAL - Use free() for both PSRAM and heap
+      if (hash) free(hash);
       esp_camera_fb_return(fb);  // Always return frame buffer
       server.send(500, "text/plain", "Face processing timeout");
       return;
@@ -153,10 +147,7 @@ void initialiserServeurWeb() {
       if (!loadFaceFromNVS(faceIndex, &face)) {
         Serial.println("❌ Erreur chargement face NVS");
         // FIX: CRITICAL - Cleanup on all error paths!
-        if (hash) {
-          if (psramFound()) ps_free(hash);
-          else free(hash);
-        }
+        if (hash) free(hash);
         esp_camera_fb_return(fb);
         server.send(500, "text/plain", "Face load from NVS failed");
         return;
@@ -169,10 +160,7 @@ void initialiserServeurWeb() {
       sendTelegramMessage(msg);
       
       // FIX: CRITICAL - Cleanup BEFORE sending response
-      if (hash) {
-        if (psramFound()) ps_free(hash);  // Use correct free function!
-        else free(hash);
-      }
+      if (hash) free(hash);
       esp_camera_fb_return(fb);
       
       delay(50);  // Let PSRAM settle before next request
@@ -193,10 +181,7 @@ void initialiserServeurWeb() {
       sendTelegramMessage("⚠️ ALERTE: Inconnu détecté! Photo enregistrée.");
       
       // FIX: CRITICAL - Cleanup BEFORE sending response
-      if (hash) {
-        if (psramFound()) ps_free(hash);  // Use correct free function!
-        else free(hash);
-      }
+      if (hash) free(hash);
       esp_camera_fb_return(fb);
       
       delay(50);  // Let PSRAM settle before next request

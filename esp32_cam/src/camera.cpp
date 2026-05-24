@@ -245,11 +245,8 @@ bool enrollFace(const char* employeeName) {
   if (err != ESP_OK) {
     Serial.println("❌ Erreur NVS");
     esp_camera_fb_return(fb);  // FIX: Clean up on error
-    // FIX: CRITICAL - Use correct free function!
-    if (hash) {
-      if (psramFound()) ps_free(hash);
-      else free(hash);
-    }
+    // FIX: CRITICAL - Use free() for both PSRAM and heap
+    if (hash) free(hash);
     return false;
   }
   
@@ -261,11 +258,8 @@ bool enrollFace(const char* employeeName) {
     Serial.printf("❌ Max faces atteint (%d)\n", MAX_ENROLLED_FACES);
     nvs_close(nvs_handle);
     esp_camera_fb_return(fb);  // FIX: Clean up
-    // FIX: CRITICAL - Use correct free function!
-    if (hash) {
-      if (psramFound()) ps_free(hash);
-      else free(hash);
-    }
+    // FIX: CRITICAL - Use free() for both PSRAM and heap
+    if (hash) free(hash);
     return false;
   }
   
@@ -286,11 +280,8 @@ bool enrollFace(const char* employeeName) {
   nvs_close(nvs_handle);
   
   esp_camera_fb_return(fb);  // FIX: Always return frame buffer
-  // FIX: CRITICAL - Use correct free function!
-  if (hash) {
-    if (psramFound()) ps_free(hash);
-    else free(hash);
-  }
+  // FIX: CRITICAL - Use free() for both PSRAM and heap
+  if (hash) free(hash);
   
   if (err == ESP_OK) {
     Serial.printf("✅ Visage enregistré #%d: %s\n", count - 1, employeeName);
@@ -467,14 +458,8 @@ void capturePhotoAutomatic() {
   }
   
   esp_camera_fb_return(fb);  // FIX: Always return frame buffer
-  // FIX: CRITICAL - Use correct free function based on allocation method
-  if (faceHash) {
-    if (psramFound()) {
-      ps_free(faceHash);  // Use ps_free for PSRAM-allocated memory
-    } else {
-      free(faceHash);
-    }
-  }
+  // FIX: CRITICAL - Use free() for both PSRAM and heap
+  if (faceHash) free(faceHash);
   delay(100);  // FIX: Let PSRAM settle between captures
 }
 
