@@ -189,4 +189,3 @@ void initialiserServeurWeb() {
   server.begin();
   Serial.println("✅ Serveur HTTP lancé!");
 }
-}

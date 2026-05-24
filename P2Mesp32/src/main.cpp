@@ -1,4 +1,4 @@
-// src/main.cpp (WROVER - The Brain)
+// src/main.cpp (WROVER - CORRECTED & Optimized)
 // Smart Gate Master Controller with Non-blocking Communication
 #include <Arduino.h>
 #include <WiFi.h>
@@ -8,19 +8,21 @@
 #include "pir_sensor.h"
 #include "blynk_manager.h"
 #include "camera_comms.h"
-#include "state_machine.h" // Add this for SystemState definition
+
 // ============================================
 // NETWORK CREDENTIALS
 // ============================================
 const char* ssid = "bartage";
 const char* password = "zoubaxd55";
 
+// ============================================
 // TIMING CONSTANTS (All in milliseconds)
 // ============================================
 const unsigned long CAR_DETECTION_WINDOW = 10000;  // 10 seconds to scan card
 const unsigned long CAM_RESPONSE_TIMEOUT = 8000;   // 8 seconds to get response from CAM
 const unsigned long GATE_OPEN_DURATION = 5000;     // Gate stays open for 5 seconds
 const unsigned long INTER_CAR_COOLDOWN = 3000;     // Wait 3 seconds before next car
+const unsigned long WIFI_RECONNECT_INTERVAL = 5000; // Try WiFi reconnect every 5 seconds
 
 // ============================================
 // STATE TRACKING VARIABLES
@@ -31,6 +33,7 @@ String currentUID = "";
 
 unsigned long stateEnteredTime = 0;
 unsigned long lastAccessGrantedTime = 0;
+unsigned long lastWifiCheckTime = 0;
 bool stateJustEntered = false;
 
 // ============================================
@@ -67,6 +70,35 @@ void setState(SystemState newState) {
 }
 
 // ============================================
+// HELPER: WiFi Connection with Timeout
+// ============================================
+void connectWiFiWithTimeout(unsigned long timeoutMs) {
+  unsigned long startTime = millis();
+  int dotCount = 0;
+  
+  Serial.print("🔗 Connecting to Wi-Fi: ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.status() != WL_CONNECTED && (millis() - startTime) < timeoutMs) {
+    delay(500);
+    Serial.print(".");
+    dotCount++;
+    if (dotCount % 10 == 0) Serial.println();  // New line every 5 seconds
+  }
+  
+  Serial.println();
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("✅ Connected! IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("⚠️  WiFi connection timeout - will retry in background");
+  }
+}
+
+// ============================================
 // SETUP
 // ============================================
 void setup() {
@@ -84,27 +116,11 @@ void setup() {
   setupPIR();
   setupCameraComms();
   
-  // 2. Connect to Wi-Fi
-  Serial.print("🔗 Connecting to Wi-Fi: ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
+  // 2. Connect to Wi-Fi with timeout (FIX: Don't hang indefinitely)
+  connectWiFiWithTimeout(10000);  // 10 second timeout
+  lastWifiCheckTime = millis();
   
-  int wifiAttempts = 0;
-  while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
-    delay(500);
-    Serial.print(".");
-    wifiAttempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("\n✅ Connected! IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n❌ Wi-Fi connection failed!");
-    // Continue anyway, may reconnect automatically
-  }
-
-  // 3. Initialize Blynk (after Wi-Fi)
+  // 3. Initialize Blynk (after Wi-Fi attempt)
   Serial.println("☁️  Initializing Blynk connection...");
   setupBlynk();
   
@@ -115,9 +131,11 @@ void setup() {
 }
 
 // ============================================
-// MAIN LOOP
+// MAIN LOOP (FIX: Removed delay(50), replaced with event-driven updates)
 // ============================================
 void loop() {
+  unsigned long currentTime = millis();
+  
   // ==========================================
   // BACKGROUND SERVICES (Always Running)
   // ==========================================
@@ -125,9 +143,17 @@ void loop() {
   updateBlynkStatus(systemState, currentUID);  // Update Blynk UI
   updateBlynkSystemHealth();  // Send health metrics to Blynk
   handlePIR();                // Monitor motion
-  updateCameraComms();        // Process async HTTP responses
+  updateCameraComms();        // FIX: This is NON-BLOCKING now - safe to call frequently
   
-  unsigned long currentTime = millis();
+  // FIX: Graceful WiFi recovery - check every 5 seconds
+  if (currentTime - lastWifiCheckTime > WIFI_RECONNECT_INTERVAL) {
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("⚠️  Wi-Fi disconnected, attempting reconnect...");
+      WiFi.reconnect();
+    }
+    lastWifiCheckTime = currentTime;
+  }
+  
   bool justEnteredState = stateJustEntered;
   
   // ==========================================
@@ -175,7 +201,7 @@ void loop() {
     case STATE_RFID_SCANNED: {
       if (isAuthorized(currentUID)) {
         Serial.println("✅ Card is authorized! Requesting image from ESP32-CAM...");
-        requestFaceScan();  // Send non-blocking request
+        requestFaceScan();  // Send non-blocking request (FIX: Now properly non-blocking)
         setState(STATE_REQUESTING_CAM);
       } else {
         Serial.println("❌ Card NOT authorized - Access Denied");
@@ -188,24 +214,29 @@ void loop() {
     // REQUESTING CAM: Just sent the request
     // ==========================================
     case STATE_REQUESTING_CAM: {
-      // Move to waiting state immediately
+      // Move to waiting state immediately (request sent above)
       setState(STATE_WAITING_CAM);
       break;
     }
     
     // ==========================================
-    // WAITING CAM: Async HTTP response pending
+    // WAITING CAM: Async HTTP response pending (FIX: Proper timeout handling)
     // ==========================================
     case STATE_WAITING_CAM: {
-      // Check if CAM responded
+      // Check if CAM responded (FIX: This is now safe, isFaceAuthorized() is atomic)
       if (isFaceAuthorized()) {
         Serial.println("🎉 Face Authorized by CAM! ACCESS GRANTED!");
         setState(STATE_ACCESS_GRANTED);
       }
       
-      // Check timeout
+      // FIX: Check for timeout or error state from CAM
       if (currentTime - stateEnteredTime > CAM_RESPONSE_TIMEOUT) {
-        Serial.println("⏰ CAM response timeout - Assuming face not recognized");
+        // Check if CAM gave us a failure response (not just timeout)
+        if (getCameraCommState() == FAILED || getCameraCommState() == TIMEOUT) {
+          Serial.println("⏰ CAM response failed - Access Denied");
+        } else {
+          Serial.println("⏰ CAM response timeout - Assuming face not recognized");
+        }
         setState(STATE_ACCESS_DENIED);
       }
       break;
@@ -258,14 +289,13 @@ void loop() {
   static unsigned long lastDiagnosticTime = 0;
   if (currentTime - lastDiagnosticTime > 5000) {
     if (systemState == STATE_IDLE) {  // Only in IDLE to avoid spam
-      // Check Wi-Fi status
-      if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("⚠️  Wi-Fi disconnected, reconnecting...");
-        WiFi.begin(ssid, password);
-      }
+      // Print memory status periodically
+      // printCameraCommMemory();
     }
     lastDiagnosticTime = currentTime;
   }
   
-  delay(50);  // Small debounce delay
+  // FIX: REMOVED delay(50) - This loop should be as responsive as possible
+  // The loop will naturally rate-limit due to sensor polling and HTTP operations
+  // Removing the delay ensures the state machine responds quickly to events
 }
