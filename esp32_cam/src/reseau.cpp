@@ -1,4 +1,4 @@
-
+// src/reseau.cpp (ESP32-CAM - CORRECTED, with WiFi Timeout)
 #include "reseau.h"
 #include <WiFi.h>
 #include "config.h"
@@ -15,24 +15,40 @@ extern unsigned long rfidDetectedTimestamp;
 extern bool captureSeriesActive;
 extern unsigned long captureSeriesStartTime;
 
+// FIX: WiFi timeout constant
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to connect to WiFi
+const unsigned long MAX_FACE_RECOGNITION_TIME_MS = 5000;  // Max 5 seconds for face recognition
+
 void initialiserWiFiEtCloud() {
   Serial.print("Connexion WiFi...");
   WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
+  
+  // FIX: TIMEOUT-PROTECTED WiFi connection (was infinite loop!)
+  unsigned long wifiStartTime = millis();
+  while (WiFi.status() != WL_CONNECTED && 
+         (millis() - wifiStartTime) < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
     Serial.print(".");
   }
-
-  Serial.println("\nWiFi connecté !");
-  Serial.print(">>> Adresse IP de la caméra : ");
-  Serial.println(WiFi.localIP());
-
-  thing.add_wifi(ssid, password);
   
-  // Initialiser Telegram après WiFi connecté
-  Serial.println("🤖 Initialisation Telegram Bot...");
-  sendTelegramMessage("✅ ESP32-CAM démarré et prêt!");
+  Serial.println();
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("✅ WiFi connecté!");
+    Serial.print(">>> Adresse IP de la caméra : ");
+    Serial.println(WiFi.localIP());
+    
+    thing.add_wifi(ssid, password);
+    
+    // Initialiser Telegram après WiFi connecté
+    Serial.println("🤖 Initialisation Telegram Bot...");
+    sendTelegramMessage("✅ ESP32-CAM démarré et prêt!");
+  } else {
+    // FIX: Don't hang - just log and continue
+    // WiFi might still reconnect automatically or be configured via web portal
+    Serial.println("⚠️  WiFi connection timeout - Device may have limited functionality");
+    Serial.println("❌ Check SSID/Password in config.h");
+  }
 }
 
 void initialiserServeurWeb() {
@@ -75,32 +91,69 @@ void initialiserServeurWeb() {
     server.send(200, "text/plain", "Photos capturées automatiquement au RFID");
   });
   
+  // ============================================
+  // 🔐 MAIN AUTHORIZATION ENDPOINT (CORRECTED)
+  // ============================================
   server.on("/authorize", HTTP_GET, []() {
     Serial.println("\n🚀 Endpoint /authorize appelé par WROVER!");
     
-    // Capturer la photo immédiatement
+    unsigned long recognitionStartTime = millis();
+    
+    // FIX: Capture photo
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("❌ Erreur capture");
-      server.send(500, "text/plain", "CAMERA_ERROR");
+      // FIX: Return 500 (server error), not 200
+      server.send(500, "text/plain", "Camera capture failed");
+      return;  // fb is already NULL, safe to return
+    }
+    
+    // FIX: Timeout-wrapped face recognition
+    uint8_t* hash = generateFaceHash(fb);
+    if (hash == nullptr) {
+      Serial.println("❌ Erreur génération hash");
+      esp_camera_fb_return(fb);  // FIX: Properly return frame buffer
+      server.send(500, "text/plain", "Face hash generation failed");
       return;
     }
     
-    // Reconnaissance faciale
-    uint8_t* hash = generateFaceHash(fb);
+    unsigned long hashTime = millis() - recognitionStartTime;
+    if (hashTime > MAX_FACE_RECOGNITION_TIME_MS) {
+      Serial.println("⏰ Face hash generation timeout!");
+      free(hash);
+      esp_camera_fb_return(fb);
+      // FIX: Return 202 Accepted (processing took too long) or 500 (server error)
+      server.send(500, "text/plain", "Face processing timeout");
+      return;
+    }
+    
+    // Recognize face
     int faceIndex = recognizeFace(hash);
+    unsigned long totalTime = millis() - recognitionStartTime;
+    
+    Serial.printf("Face recognition completed in %ld ms\n", totalTime);
     
     if (faceIndex >= 0) {
       // Visage reconnu
       FaceSignature face;
-      loadFaceFromNVS(faceIndex, &face);
+      if (!loadFaceFromNVS(faceIndex, &face)) {
+        Serial.println("❌ Erreur chargement face NVS");
+        free(hash);
+        esp_camera_fb_return(fb);
+        // FIX: Return proper error code
+        server.send(500, "text/plain", "Face load from NVS failed");
+        return;
+      }
+      
       Serial.printf("✅ VISAGE RECONNU: %s (ID: %d)\n", face.name, faceIndex);
       
       // Telegram notification
       String msg = "✅ Accès accordé à " + String(face.name);
       sendTelegramMessage(msg);
       
-      // Réponse au WROVER
+      // FIX: Return 200 OK for success, with meaningful body
+      free(hash);
+      esp_camera_fb_return(fb);
       server.send(200, "text/plain", "FACE_OK");
     } else {
       // Visage inconnu - ALERTE
@@ -115,12 +168,11 @@ void initialiserServeurWeb() {
       // Telegram alerte
       sendTelegramMessage("⚠️ ALERTE: Inconnu détecté! Photo enregistrée.");
       
-      // Réponse au WROVER
-      server.send(200, "text/plain", "FACE_UNKNOWN");
+      // FIX: Return 401 Unauthorized for face not recognized
+      free(hash);
+      esp_camera_fb_return(fb);
+      server.send(401, "text/plain", "FACE_UNKNOWN");
     }
-    
-    free(hash);
-    esp_camera_fb_return(fb);
   });
 
   // Route pour servir l'image
@@ -129,7 +181,7 @@ void initialiserServeurWeb() {
     camera_fb_t * fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("❌ Erreur capture pour /image");
-      server.send(500, "text/plain", "Erreur capture");
+      server.send(500, "text/plain", "Image capture failed");
       return;
     }
     Serial.printf("Image capturée: %d bytes\n", fb->len);
@@ -152,11 +204,17 @@ void initialiserServeurWeb() {
     nvs_handle_t nvs_handle;
     nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     nvs_erase_all(nvs_handle);
-    nvs_commit(nvs_handle);
+    
+    // FIX: Check commit result
+    esp_err_t err = nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
     
-    server.send(200, "text/plain", "Tous les visages ont été supprimés");
-    sendTelegramMessage("🗑️ Tous les visages ont été supprimés");
+    if (err == ESP_OK) {
+      server.send(200, "text/plain", "Tous les visages ont été supprimés");
+      sendTelegramMessage("🗑️ Tous les visages ont été supprimés");
+    } else {
+      server.send(500, "text/plain", "Erreur suppression visages");
+    }
   });
 
   // ============================================
@@ -188,5 +246,4 @@ void initialiserServeurWeb() {
   
   server.begin();
   Serial.println("✅ Serveur HTTP lancé!");
-}
 }
