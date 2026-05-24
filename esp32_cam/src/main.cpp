@@ -6,6 +6,10 @@
 #include "camera.h"
 #include "esp_camera.h"
 #include "reseau.h"
+#include <UniversalTelegramBot.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+
 String derniereImageBase64 = "";
 
 // Variable pour tracer l'état précédent du RFID
@@ -14,6 +18,10 @@ bool previousRfidDetected = false;
 // Variables pour la capture en série
 bool captureSeriesActive = false;
 unsigned long captureSeriesStartTime = 0;
+
+// Variables pour enrôlement (reconnaissance faciale)
+bool enrollMode = false;
+String enrollingEmployeeName = "";
 
 #define USERNAME "inesss"
 #define DEVICE_ID "cameraa"
@@ -32,11 +40,17 @@ const char* password = "zoubaxd55";
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  Serial.println("\n\n=== ESP32-CAM Démarrage ===\n");
+
+  // Initialiser NVS pour les visages
+  initializeNVS();
 
   initialiserCamera();
   initialiserWiFiEtCloud();
 
-  // Existing RFID status resource
+  // ===== RESSOURCES THINGER =====
+  
+  // RFID Status
   thing["rfid_status"] << [](pson &out) {
     if (rfidDetected && millis() - rfidDetectedTimestamp < RFID_STATUS_DURATION_MS) {
       out = "OK";
@@ -45,14 +59,39 @@ void setup() {
     }
   };
 
-  // -----------------------------------------------------------
-  // 📸 NOUVEAU: RESSOURCE IMAGE THINGER (Push en temps réel)
-  // -----------------------------------------------------------
-thing["image"] >> [](pson& out) {
+  // Image en temps réel
+  thing["image"] >> [](pson& out) {
     out = derniereImageBase64.c_str();
   };
 
+  // ===== NOUVEAU: Ressource ENROLL (Bouton d'enrôlement) =====
+  thing["enroll"] << [](pson& in) {
+    if (in.is_empty()) return;
+    
+    String employeeName = (const char*)in;
+    if (employeeName.length() > 0) {
+      Serial.printf("\n🎯 ENRÔLEMENT DEMANDÉ: %s\n", employeeName.c_str());
+      
+      enrollMode = true;
+      enrollingEmployeeName = employeeName;
+      captureSeriesActive = true;
+      captureSeriesStartTime = millis();
+      
+      sendTelegramMessage("📝 Enrôlement en cours pour: " + employeeName);
+    }
+  };
+
+  // Statut liste des visages
+  thing["faces_list"] >> [](pson& out) {
+    int count = getNVSFaceCount();
+    out = count;
+  };
+
   initialiserServeurWeb();
+  
+  // Afficher la liste des visages enregistrés au démarrage
+  listAllEnrolledFaces();
+  Serial.println("\n✅ ESP32-CAM prêt!\n");
 }
 
 void loop() {
@@ -62,14 +101,12 @@ void loop() {
   // ============================================
   // 🔄 MONITORING AUTOMATIQUE RFID
   // ============================================
-  // Détecte un changement d'état RFID (false -> true)
   if (rfidDetected && !previousRfidDetected) {
     Serial.println("\n✅ RFID DETECTED! Triggering photo capture...");
     captureSeriesActive = true;
     captureSeriesStartTime = millis();
     previousRfidDetected = true;
   }
-  // Réinitialiser quand le RFID retourne à WAIT
   else if (!rfidDetected && previousRfidDetected) {
     Serial.println("⏸️  RFID état retourné à WAIT");
     previousRfidDetected = false;
@@ -81,17 +118,15 @@ void loop() {
   if (captureSeriesActive) {
     unsigned long elapsedTime = millis() - captureSeriesStartTime;
     
-    // Vérifier si on est encore dans la fenêtre de capture
     if (elapsedTime < PHOTO_CAPTURE_DURATION_MS) {
-      // Vérifier si on doit capturer (intervalle entre photos)
       static unsigned long lastCaptureTime = 0;
       if (millis() - lastCaptureTime >= PHOTO_INTERVAL_MS) {
         capturePhotoAutomatic();
         lastCaptureTime = millis();
       }
     } else {
-      // Fin de la série de captures
       captureSeriesActive = false;
+      enrollMode = false;
       Serial.println("✔️  Série de captures terminée!");
     }
   }
