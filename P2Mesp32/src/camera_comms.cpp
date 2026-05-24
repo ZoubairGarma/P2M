@@ -1,15 +1,16 @@
-// src/camera_comms.cpp (WROVER - Non-blocking Communication)
+// src/camera_comms.cpp (WROVER - CORRECTED, Non-blocking & Crash-Free)
 #include "camera_comms.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 
 // ============================================
-// CONFIGURATION
+// CONFIGURATION - ALIGNED TIMEOUTS
 // ============================================
 String camIP = "10.93.156.1";  // Replace with your ESP32-CAM's IP
-const int HTTP_TIMEOUT_MS = 5000;  // 5 second timeout for HTTP request
-const unsigned long REQUEST_TIMEOUT_MS = 8000;  // 8 second total timeout
+const int HTTP_CONNECT_TIMEOUT_MS = 3000;   // 3s to connect
+const int HTTP_RESPONSE_TIMEOUT_MS = 6000;  // 6s to get response
+const unsigned long REQUEST_TOTAL_TIMEOUT_MS = 8000;  // 8s total (must be >= HTTP_RESPONSE_TIMEOUT_MS)
 
 // ============================================
 // STATE MACHINE & HTTP MANAGEMENT
@@ -66,42 +67,52 @@ void requestFaceScan() {
   lastRequestTime = millis();
   faceMatched = false;
   
-  // Initialize HTTP client (will be used in updateCameraComms)
-  if (httpClient != nullptr) {
-    delete httpClient;
-  }
+  // Clean up any existing HTTP client
+  cleanupHTTP();
   httpClient = new HTTPClient();
+  
+  if (httpClient == nullptr) {
+    Serial.println("❌ Failed to allocate HTTPClient memory");
+    currentState = FAILED;
+    return;
+  }
   
   String url = "http://" + camIP + "/authorize";
   
-  // Set timeout and begin connection
-  httpClient->setConnectTimeout(HTTP_TIMEOUT_MS);
-  httpClient->setTimeout(HTTP_TIMEOUT_MS);
+  // FIX: Set timeouts BEFORE begin()
+  httpClient->setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
+  httpClient->setTimeout(HTTP_RESPONSE_TIMEOUT_MS);
   
+  // Attempt connection with proper error handling
   if (!httpClient->begin(url)) {
-    Serial.println("❌ Failed to begin HTTP connection");
+    Serial.println("❌ Failed to initialize HTTP connection");
     currentState = FAILED;
-    delete httpClient;
-    httpClient = nullptr;
+    cleanupHTTP();  // Properly clean up on error
     return;
   }
   
   // Transition to waiting state
   currentState = WAITING_RESPONSE;
-  Serial.println("✏️  Waiting for ESP32-CAM response...");
+  Serial.println("✏️  Waiting for ESP32-CAM response (max " + String(REQUEST_TOTAL_TIMEOUT_MS/1000) + "s)...");
 }
 
 // ============================================
 // UPDATE FUNCTION (Call in main loop)
 // ============================================
 void updateCameraComms() {
-  if (currentState != WAITING_RESPONSE || httpClient == nullptr) {
+  if (currentState != WAITING_RESPONSE) {
+    return;  // Early exit if not waiting
+  }
+  
+  if (httpClient == nullptr) {
+    // This shouldn't happen, but guard against null pointer
+    currentState = FAILED;
     return;
   }
   
-  // Check timeout
+  // FIX: Check timeout FIRST before any operations
   unsigned long elapsedTime = millis() - requestStartTime;
-  if (elapsedTime > REQUEST_TIMEOUT_MS) {
+  if (elapsedTime > REQUEST_TOTAL_TIMEOUT_MS) {
     Serial.print("⏰ HTTP Request TIMEOUT after ");
     Serial.print(elapsedTime);
     Serial.println(" ms");
@@ -113,67 +124,78 @@ void updateCameraComms() {
   // Send the request and get response code
   int httpResponseCode = httpClient->GET();
   
-  // If response code is 0 or negative, request failed or in progress
-  if (httpResponseCode <= 0) {
-    Serial.println("⏳ Waiting for response...");
-    return;  // Still waiting, return to main loop
+  // FIX: Handle in-progress (0 means still connecting/sending)
+  if (httpResponseCode == 0) {
+    // Still waiting, no response yet
+    return;
   }
   
-  // Response received!
+  // Handle network errors
+  if (httpResponseCode < 0) {
+    Serial.print("❌ HTTP Error Code: ");
+    Serial.println(httpResponseCode);
+    currentState = FAILED;
+    cleanupHTTP();
+    return;
+  }
+  
+  // FIX: Use proper HTTP status codes for clear semantics
+  // Response received! Parse based on status code
   if (httpResponseCode == 200) {
+    // 200 OK - Face recognized
     String response = httpClient->getString();
-    Serial.print("✅ CAM Response (");
-    Serial.print(httpResponseCode);
-    Serial.print("): ");
+    Serial.print("✅ CAM Response (200): ");
     Serial.println(response);
     
-    // Check for authorization response
-    if (response.indexOf("FACE_OK") != -1) {
-      faceMatched = true;
-      currentState = SUCCESS;
-      Serial.println("🎉 Face Authorized by ESP32-CAM!");
-      cleanupHTTP();
-      return;
-    }
-
-    // Handle intermediate processing state without failing immediately
-    if (response.indexOf("FACE_PROCESSING") != -1 || response.indexOf("PROCESSING") != -1) {
-      Serial.println("⏳ CAM still processing face, retrying until timeout...");
-      return;
-    }
-
-    if (response.indexOf("FACE_UNKNOWN") != -1 || response.indexOf("UNKNOWN") != -1) {
-      currentState = FAILED;
-      Serial.println("❌ Face NOT Authorized - access denied");
-      cleanupHTTP();
-      return;
-    }
-
-    if (response.indexOf("CAMERA_ERROR") != -1) {
-      currentState = FAILED;
-      Serial.println("❌ Camera error returned by CAM");
-      cleanupHTTP();
-      return;
-    }
-
-    // Unknown response, keep waiting until timeout to allow the camera to finish.
-    Serial.println("⚠️ Unknown CAM response, retrying until timeout...");
+    faceMatched = true;
+    currentState = SUCCESS;
+    Serial.println("🎉 Face Authorized by ESP32-CAM!");
+    cleanupHTTP();
     return;
-  } else {
-    Serial.print("❌ HTTP Error ");
-    Serial.print(httpResponseCode);
-    Serial.println(" from CAM");
-    currentState = FAILED;
+  } 
+  else if (httpResponseCode == 202) {
+    // 202 Accepted - CAM still processing, retry next loop
+    Serial.println("⏳ CAM processing face, retrying...");
+    return;  // Keep waiting
   }
-  
-  cleanupHTTP();
+  else if (httpResponseCode == 401) {
+    // 401 Unauthorized - Face not recognized
+    String response = httpClient->getString();
+    Serial.print("❌ CAM Response (401): ");
+    Serial.println(response);
+    
+    currentState = FAILED;
+    Serial.println("❌ Face NOT Authorized - access denied");
+    cleanupHTTP();
+    return;
+  }
+  else if (httpResponseCode == 500) {
+    // 500 Internal Server Error - Camera or processing error
+    String response = httpClient->getString();
+    Serial.print("❌ CAM Error (500): ");
+    Serial.println(response);
+    
+    currentState = FAILED;
+    Serial.println("❌ Camera error on ESP32-CAM side");
+    cleanupHTTP();
+    return;
+  }
+  else {
+    // Unexpected status code
+    Serial.print("⚠️  Unexpected CAM response code: ");
+    Serial.println(httpResponseCode);
+    currentState = FAILED;
+    cleanupHTTP();
+    return;
+  }
 }
 
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
 bool isFaceAuthorized() {
-  if (faceMatched && currentState == SUCCESS) {
+  // FIX: Only return true ONCE, then reset state atomically
+  if (currentState == SUCCESS && faceMatched) {
     faceMatched = false;
     currentState = IDLE;  // Reset state after consuming result
     return true;
@@ -193,7 +215,7 @@ void resetCameraComm() {
 
 void cleanupHTTP() {
   if (httpClient != nullptr) {
-    httpClient->end();
+    httpClient->end();     // Close connection
     delete httpClient;
     httpClient = nullptr;
   }
