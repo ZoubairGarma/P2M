@@ -238,6 +238,44 @@ void initialiserServeurWeb() {
   // ============================================
   // 📋 ENDPOINT LISTE DES VISAGES
   // ============================================
+  // 🔧 RESET & ENROLL (One-shot: clear all + enroll immediately)
+  // ============================================
+  server.on("/reset-and-enroll", HTTP_GET, []() {
+    String name = server.arg("name");
+    if (name.length() == 0) {
+      server.send(400, "text/plain", "Paramètre 'name' requis");
+      return;
+    }
+    
+    Serial.printf("\n🔧 RESET-AND-ENROLL: %s\n", name.c_str());
+    
+    // STEP 1: Clear all faces
+    nvs_handle_t nvs_handle;
+    nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    nvs_erase_all(nvs_handle);
+    esp_err_t clearErr = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    delay(100);
+    
+    if (clearErr != ESP_OK) {
+      server.send(500, "text/plain", "Clear failed");
+      return;
+    }
+    
+    Serial.println("✅ All faces cleared!");
+    
+    // STEP 2: Start enrollment immediately
+    enrollMode = true;
+    enrollingEmployeeName = name;
+    captureSeriesActive = true;
+    captureSeriesStartTime = millis();
+    
+    Serial.printf("✅ Enrollment started for: %s\n", name.c_str());
+    
+    server.send(200, "text/plain", "Reset complete! Enrolling: " + name);
+  });
+
+  // ============================================
   server.on("/faces/list", HTTP_GET, []() {
     int count = getNVSFaceCount();
     String response = "Visages enregistrés (" + String(count) + "):\n";
