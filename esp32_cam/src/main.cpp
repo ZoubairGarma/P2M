@@ -10,10 +10,12 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
+
 String derniereImageBase64 = "";
 
 // Variable pour tracer l'état précédent du RFID
 bool previousRfidDetected = false;
+bool alerteIntrus = false;
 
 // Variables pour la capture en série
 bool captureSeriesActive = false;
@@ -24,11 +26,6 @@ unsigned long lastCaptureTime = 0;  // FIX: GLOBAL variable instead of static!
 bool enrollMode = false;
 String enrollingEmployeeName = "";
 
-#define USERNAME "inesss"
-#define DEVICE_ID "cameraa"
-#define DEVICE_CREDENTIAL "cameraa"
-
-ThingerESP32 thing(USERNAME, DEVICE_ID, DEVICE_CREDENTIAL);
 WebServer server(80);
 bool accessGranted = false;
 unsigned long accessGrantedTimestamp = 0;
@@ -47,47 +44,7 @@ void setup() {
   initializeNVS();
 
   initialiserCamera();
-  initialiserWiFiEtCloud();
-
-  // ===== RESSOURCES THINGER =====
-  
-  // RFID Status
-  thing["rfid_status"] << [](pson &out) {
-    if (rfidDetected && millis() - rfidDetectedTimestamp < RFID_STATUS_DURATION_MS) {
-      out = "OK";
-    } else {
-      out = "WAIT";
-    }
-  };
-
-  // Image en temps réel
-  thing["image"] >> [](pson& out) {
-    out = derniereImageBase64.c_str();
-  };
-
-  // ===== NOUVEAU: Ressource ENROLL (Bouton d'enrôlement) =====
-  thing["enroll"] << [](pson& in) {
-    if (in.is_empty()) return;
-    
-    String employeeName = (const char*)in;
-    if (employeeName.length() > 0) {
-      Serial.printf("\n🎯 ENRÔLEMENT DEMANDÉ: %s\n", employeeName.c_str());
-      
-      enrollMode = true;
-      enrollingEmployeeName = employeeName;
-      captureSeriesActive = true;
-      captureSeriesStartTime = millis();
-      
-      sendTelegramMessage("📝 Enrôlement en cours pour: " + employeeName);
-    }
-  };
-
-  // Statut liste des visages
-  thing["faces_list"] >> [](pson& out) {
-    int count = getNVSFaceCount();
-    out = count;
-  };
-
+  initialiserWiFi();
   initialiserServeurWeb();
   
   // Afficher la liste des visages enregistrés au démarrage
@@ -96,12 +53,11 @@ void setup() {
 }
 
 void loop() {
-  // FIX: Don't block on Telegram every loop iteration
-  // Only handle Thinger connection every 500ms
-  static unsigned long lastThingerHandle = 0;
-  if (millis() - lastThingerHandle > 500) {
-    thing.handle();
-    lastThingerHandle = millis();
+  // Handle Telegram messages periodically
+  static unsigned long lastTelegramHandle = 0;
+  if (millis() - lastTelegramHandle > 500) {
+    handleTelegramMessages();
+    lastTelegramHandle = millis();
   }
   
   // ✅ CRITICAL: Handle web server FREQUENTLY so /authorize responds immediately

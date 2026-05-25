@@ -4,6 +4,7 @@
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <esp_camera.h>
+#include "config.h"
 
 void initialiserCamera();
 void capturePhoto();
@@ -13,26 +14,28 @@ void handlePhotoCaptureSeries();
 String base64_encode(const uint8_t* data, size_t len);
 
 // ==================== RECONNAISSANCE FACIALE ====================
-struct FaceSignature {
-  uint8_t hash[32];
-  char name[32];
-  uint8_t id;
-};
 
-// Génère une signature (hash) simple du visage
-uint8_t* generateFaceHash(camera_fb_t* fb);
+// AI Module: Detects face in frame
+FaceDetectionResult detectFaceAI(camera_fb_t* fb);
 
-// Compare deux signatures de visage (retourne score 0-100)
-int compareFaceSignatures(uint8_t* hash1, uint8_t* hash2);
+// AI Module: Extracts face embedding (128-dim vector)
+bool extractFaceEmbedding(camera_fb_t* fb, float* embedding);
+
+// Compare two face embeddings using cosine similarity (0-1, higher=more similar)
+float compareFaceEmbeddings(const float* emb1, const float* emb2);
 
 // ==================== NVS (STOCKAGE PERSISTANT) ====================
 void initializeNVS();
-bool enrollFace(const char* employeeName);
-int recognizeFace(uint8_t* faceHash);
+bool enrollFaceAI(const char* employeeName, camera_fb_t* fb);
+int recognizeFaceAI(const float* embedding);
 int getNVSFaceCount();
-bool loadFaceFromNVS(int index, FaceSignature* face);
+bool loadFaceEmbedding(int index, FaceEmbedding* face);
 void listAllEnrolledFaces();
 
 // ==================== TELEGRAM ====================
 void sendTelegramMessage(const String& message);
 void sendTelegramPhoto(uint8_t* jpgData, size_t jpgLen, const String& caption);
+
+// ==================== LAST ENROLLED PHOTO STORAGE ====================
+extern uint8_t* lastEnrolledPhoto;
+extern size_t lastEnrolledSize;

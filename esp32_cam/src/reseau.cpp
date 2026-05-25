@@ -3,10 +3,12 @@
 #include <WiFi.h>
 #include "config.h"
 #include "camera.h"
-#include <ThingerESP32.h>
+#include <UniversalTelegramBot.h>
+#include <WiFiClientSecure.h>
+
 #include <esp_camera.h>
 
-extern ThingerESP32 thing;
+extern bool alerteIntrus;
 extern bool enrollMode;
 extern String enrollingEmployeeName;
 extern String derniereImageBase64;
@@ -14,12 +16,17 @@ extern bool rfidDetected;
 extern unsigned long rfidDetectedTimestamp;
 extern bool captureSeriesActive;
 extern unsigned long captureSeriesStartTime;
+extern bool recognitionDone;
+
+// WiFiClientSecure pour Telegram
+WiFiClientSecure clientSecure;
+UniversalTelegramBot bot(BOT_TOKEN, clientSecure);
 
 // FIX: WiFi timeout constant
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to connect to WiFi
-const unsigned long MAX_FACE_RECOGNITION_TIME_MS = 5000;  // Max 5 seconds for face recognition
+// MAX_FACE_RECOGNITION_TIME_MS is defined in config.h
 
-void initialiserWiFiEtCloud() {
+void initialiserWiFi() {
   Serial.print("Connexion WiFi...");
   WiFi.begin(ssid, password);
   
@@ -38,7 +45,7 @@ void initialiserWiFiEtCloud() {
     Serial.print(">>> Adresse IP de la caméra : ");
     Serial.println(WiFi.localIP());
     
-    thing.add_wifi(ssid, password);
+    
     
     // Initialiser Telegram après WiFi connecté
     Serial.println("🤖 Initialisation Telegram Bot...");
@@ -63,7 +70,10 @@ void initialiserServeurWeb() {
     Serial.println("\n🚀 Endpoint /rfid/trigger appelé par WROVER!");
     rfidDetected = true;
     rfidDetectedTimestamp = millis();
-    Serial.println("✅ rfidDetected = true - Capture va démarrer automatiquement!");
+    recognitionDone = false; // reset recognition lock for this new RFID event
+    startPhotoCaptureSeries();
+    Serial.println("✅ rfidDetected = true - Capture série démarrée immédiatement !");
+    Serial.printf("   captureSeriesActive=%d, enrollMode=%d\n", captureSeriesActive, enrollMode);
     server.send(200, "text/plain", "RFID_TRIGGERED");
   });
 
@@ -95,7 +105,7 @@ void initialiserServeurWeb() {
   // 🔐 MAIN AUTHORIZATION ENDPOINT (COMPLETELY CORRECTED)
   // ============================================
   server.on("/authorize", HTTP_GET, []() {
-    Serial.println("\n🚀 Endpoint /authorize appelé par WROVER!");
+    Serial.println("\n🚀 Endpoint /authorize - Face AI Recognition");
     
     unsigned long recognitionStartTime = millis();
     
@@ -104,89 +114,87 @@ void initialiserServeurWeb() {
     // ============================================
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
-      Serial.println("❌ Erreur capture");
+      Serial.println("❌ Camera capture failed");
       server.send(500, "text/plain", "Camera capture failed");
-      return;  // fb is NULL, safe to return
-    }
-    
-    // ============================================
-    // STEP 2: Generate hash
-    // ============================================
-    uint8_t* hash = generateFaceHash(fb);
-    if (hash == nullptr) {
-      Serial.println("❌ Erreur génération hash");
-      esp_camera_fb_return(fb);  // FIX: Return frame buffer on error
-      server.send(500, "text/plain", "Face hash generation failed");
       return;
     }
     
-    unsigned long hashTime = millis() - recognitionStartTime;
-    if (hashTime > MAX_FACE_RECOGNITION_TIME_MS) {
-      Serial.println("⏰ Face hash generation timeout!");
-      // FIX: CRITICAL - Use free() for both PSRAM and heap
-      if (hash) free(hash);
-      esp_camera_fb_return(fb);  // Always return frame buffer
+    // ============================================
+    // STEP 2: Detect face (optional pre-check)
+    // ============================================
+    FaceDetectionResult detection = detectFaceAI(fb);
+    if (!detection.detected) {
+      Serial.println("⚠️  No face detected in image");
+      esp_camera_fb_return(fb);
+      server.send(400, "text/plain", "No face detected");
+      return;
+    }
+    
+    // ============================================
+    // STEP 3: Extract face embedding using AI
+    // ============================================
+    float embedding[FACE_EMBEDDING_SIZE];
+    if (!extractFaceEmbedding(fb, embedding)) {
+      Serial.println("❌ Failed to extract face embedding");
+      esp_camera_fb_return(fb);
+      server.send(500, "text/plain", "Face embedding extraction failed");
+      return;
+    }
+    
+    unsigned long extractTime = millis() - recognitionStartTime;
+    if (extractTime > MAX_FACE_RECOGNITION_TIME_MS) {
+      Serial.println("⏰ Face processing timeout!");
+      esp_camera_fb_return(fb);
       server.send(500, "text/plain", "Face processing timeout");
       return;
     }
     
     // ============================================
-    // STEP 3: Recognize face
+    // STEP 4: Recognize face (compare embeddings)
     // ============================================
-    int faceIndex = recognizeFace(hash);
+    int faceIndex = recognizeFaceAI(embedding);
     unsigned long totalTime = millis() - recognitionStartTime;
     
-    Serial.printf("Face recognition completed in %ld ms\n", totalTime);
+    Serial.printf("⏱️  Face recognition completed in %ld ms\n", totalTime);
     
     // ============================================
-    // STEP 4: Handle result
+    // STEP 5: Handle result
     // ============================================
     if (faceIndex >= 0) {
-      // Visage reconnu ✅
-      FaceSignature face;
-      if (!loadFaceFromNVS(faceIndex, &face)) {
-        Serial.println("❌ Erreur chargement face NVS");
-        // FIX: CRITICAL - Cleanup on all error paths!
-        if (hash) free(hash);
+      // Face recognized ✅
+      FaceEmbedding face;
+      if (!loadFaceEmbedding(faceIndex, &face)) {
+        Serial.println("❌ Failed to load face from NVS");
         esp_camera_fb_return(fb);
         server.send(500, "text/plain", "Face load from NVS failed");
         return;
       }
       
-      Serial.printf("✅ VISAGE RECONNU: %s (ID: %d)\n", face.name, faceIndex);
+      Serial.printf("✅ FACE RECOGNIZED: %s (ID: %d)\n", face.name, faceIndex);
       
       // Telegram notification
-      String msg = "✅ Accès accordé à " + String(face.name);
+      String msg = "✅ Access granted to " + String(face.name);
       sendTelegramMessage(msg);
       
-      // FIX: CRITICAL - Cleanup BEFORE sending response
-      if (hash) free(hash);
       esp_camera_fb_return(fb);
+      delay(50);
       
-      delay(50);  // Let PSRAM settle before next request
-      
-      // FIX: Return 200 OK for success
       server.send(200, "text/plain", "FACE_OK");
     } else {
-      // Visage inconnu - ALERTE ❌
-      Serial.println("⚠️  VISAGE INCONNU - ALERTE");
+      // Unknown face - ALERT ❌
+      Serial.println("⚠️  UNKNOWN FACE - ALERT");
       
-      // Envoyer photo à Thinger
+      // Send photo to Thinger
       String b64 = base64_encode(fb->buf, fb->len);
       derniereImageBase64 = "data:image/jpeg;base64," + b64;
-      protoson::pson data = derniereImageBase64.c_str();
-      thing.set_property("image", data);
+      alerteIntrus = true;
       
-      // Telegram alerte
-      sendTelegramMessage("⚠️ ALERTE: Inconnu détecté! Photo enregistrée.");
+      // Telegram alert
+      sendTelegramMessage("⚠️ ALERT: Unknown face detected! Photo recorded.");
       
-      // FIX: CRITICAL - Cleanup BEFORE sending response
-      if (hash) free(hash);
       esp_camera_fb_return(fb);
+      delay(50);
       
-      delay(50);  // Let PSRAM settle before next request
-      
-      // FIX: Return 401 Unauthorized for face not recognized
       server.send(401, "text/plain", "FACE_UNKNOWN");
     }
   });
@@ -214,7 +222,34 @@ void initialiserServeurWeb() {
   });
 
   // ============================================
-  // 🗑️ ENDPOINT POUR EFFACER LES VISAGES (DEBUG)
+  // � ENDPOINT POUR AFFICHER LA DERNIÈRE PHOTO D'ENRÔLEMENT
+  // ============================================
+  server.on("/last_enroll", HTTP_GET, []() {
+    Serial.println(">>> /last_enroll requested!");
+    
+    // Vérifier si une photo d'enrôlement a été stockée
+    if (lastEnrolledPhoto == NULL || lastEnrolledSize == 0) {
+      Serial.println("❌ Aucune photo d'enrôlement stockée");
+      server.send(404, "text/plain", "No enrolled photo available");
+      return;
+    }
+    
+    Serial.printf("Envoi photo enrôlement: %d bytes\n", lastEnrolledSize);
+    
+    WiFiClient client = server.client();
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: image/jpeg");
+    client.println("Connection: close");
+    client.printf("Content-Length: %d\r\n", lastEnrolledSize);
+    client.println();
+    client.write(lastEnrolledPhoto, lastEnrolledSize);
+    
+    delay(50);  // FIX: Let PSRAM settle
+    Serial.println("✅ Photo enrôlement envoyée!");
+  });
+
+  // ============================================
+  // �🗑️ ENDPOINT POUR EFFACER LES VISAGES (DEBUG)
   // ============================================
   server.on("/faces/clear", HTTP_GET, []() {
     Serial.println("🗑️  Suppression de tous les visages enregistrés");
@@ -278,13 +313,12 @@ void initialiserServeurWeb() {
   // ============================================
   server.on("/faces/list", HTTP_GET, []() {
     int count = getNVSFaceCount();
-    String response = "Visages enregistrés (" + String(count) + "):\n";
+    String response = "Enrolled faces (" + String(count) + "):\n";
     
+    // TODO: Load and display face names from NVS
+    // For now just show count
     for (int i = 0; i < count; i++) {
-      FaceSignature face;
-      if (loadFaceFromNVS(i, &face)) {
-        response += String(i) + ": " + String(face.name) + "\n";
-      }
+      response += String(i) + ": <face>\n";
     }
     
     server.send(200, "text/plain", response);
@@ -302,4 +336,24 @@ void initialiserServeurWeb() {
   
   server.begin();
   Serial.println("✅ Serveur HTTP lancé!");
+}
+
+// ==================== TELEGRAM MESSAGE HANDLER ====================
+void handleTelegramMessages() {
+  // Check for Telegram messages (if WiFi connected and bot initialized)
+  if (WiFi.status() == WL_CONNECTED) {
+    if (bot.getUpdates(bot.last_message_received + 1)) {
+      // UniversalTelegramBot stores a single message at a time
+      Serial.println("📨 Telegram message received");
+      
+      // Optional: handle simple commands
+      String text = bot.messages[0].text;
+      if (text == "/status") {
+        String reply = "🤖 ESP32-CAM is running!\n";
+        reply += "📷 Face recognition active\n";
+        reply += "✅ Ready to process faces";
+        bot.sendMessage(bot.messages[0].chat_id, reply);
+      }
+    }
+  }
 }

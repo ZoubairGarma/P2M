@@ -8,5 +8,6 @@ extern const char* password;
 extern bool rfidDetected;
 extern unsigned long rfidDetectedTimestamp;
 
-void initialiserWiFiEtCloud();
+void initialiserWiFi();
 void initialiserServeurWeb();
+void handleTelegramMessages();

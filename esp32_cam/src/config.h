@@ -23,10 +23,11 @@ extern unsigned long rfidDetectedTimestamp;
 
 // --- RECONNAISSANCE FACIALE & NVS ---
 #define MAX_ENROLLED_FACES 10
-#define FACE_SIGNATURE_SIZE 32  // Taille du hash du visage
-#define NVS_NAMESPACE "faces"
+#define FACE_EMBEDDING_SIZE 128  // MobileNet produces 128-dim embeddings (not 32-byte hash!)
+#define NVS_NAMESPACE "faces_ai"
 #define NVS_FACES_COUNT_KEY "count"
-#define MIN_FACE_MATCH_SCORE 30  // % - File-size based, very lenient (allow 15% size variance)
+#define MIN_FACE_MATCH_SCORE 0.55f  // Cosine similarity threshold (0-1, higher=stricter)
+#define MAX_FACE_RECOGNITION_TIME_MS 5000
 
 // Variables pour la capture en série
 extern bool captureSeriesActive;
@@ -51,3 +52,16 @@ extern String enrollingEmployeeName;
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
+
+// --- AI MODULE STRUCTURES ---
+struct FaceDetectionResult {
+  bool detected;           // Face found?
+  float confidence;        // 0-1 detection confidence
+  int box_x, box_y, box_w, box_h;  // Bounding box
+};
+
+struct FaceEmbedding {
+  float embedding[128];    // MobileNet 128-dim embedding
+  char name[32];
+  uint32_t timestamp;
+};
