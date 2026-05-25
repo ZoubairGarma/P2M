@@ -11,11 +11,12 @@ void capturePhoto();
 void capturePhotoAutomatic();
 void startPhotoCaptureSeries();
 void handlePhotoCaptureSeries();
+void handleFaceDetection();  // ✅ NEW: Continuous face detection + Telegram alerts
 String base64_encode(const uint8_t* data, size_t len);
 
 // ==================== RECONNAISSANCE FACIALE ====================
 
-// AI Module: Detects face in frame
+// AI Module: Simple face detection (returns true/false)
 FaceDetectionResult detectFaceAI(camera_fb_t* fb);
 
 // AI Module: Extracts face embedding (128-dim vector)

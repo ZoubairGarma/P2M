@@ -24,6 +24,8 @@ extern unsigned long rfidDetectedTimestamp;
 // --- RECONNAISSANCE FACIALE & NVS ---
 #define MAX_ENROLLED_FACES 10
 #define FACE_EMBEDDING_SIZE 128  // MobileNet produces 128-dim embeddings (not 32-byte hash!)
+#define FACE_WIDTH 160           // Aligned face size for MobileNet (from esp-face)
+#define FACE_HEIGHT 120          // Aligned face size for MobileNet (from esp-face)
 #define NVS_NAMESPACE "faces_ai"
 #define NVS_FACES_COUNT_KEY "count"
 #define MIN_FACE_MATCH_SCORE 0.55f  // Cosine similarity threshold (0-1, higher=stricter)

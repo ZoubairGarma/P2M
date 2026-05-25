@@ -60,6 +60,9 @@ void loop() {
     lastTelegramHandle = millis();
   }
   
+  // ✅ NEW: Continuous face detection with Telegram alerts
+  handleFaceDetection();
+  
   // ✅ CRITICAL: Handle web server FREQUENTLY so /authorize responds immediately
   server.handleClient();
   delay(10);  // Yield to other tasks briefly
