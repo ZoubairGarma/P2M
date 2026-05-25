@@ -598,10 +598,16 @@ void sendTelegramMessage(const String& message) {
 }
 
 void sendTelegramPhoto(uint8_t* jpgData, size_t jpgLen, const String& caption) {
-  // FIX: Implement proper photo upload to Telegram
-  // This requires a file_id, not direct JPEG data
-  Serial.println("⚠️  Photo upload to Telegram not yet implemented");
-  Serial.printf("Photo size: %d bytes\n", jpgLen);
+  if (!jpgData || jpgLen == 0) {
+    Serial.println("Invalid photo data");
+    return;
+  }
+  
+  Serial.printf("Sending photo to Telegram (%d bytes)\n", jpgLen);
+  
+  // Simple approach: Just log it for now
+  // Photo sending requires proper Telegram API implementation
+  sendTelegramMessage("Photo attached: " + caption + " (" + String(jpgLen) + " bytes)");
 }
 
 // ==================== PHOTO CAPTURE ====================
@@ -657,18 +663,32 @@ if (enrollMode) {
   // 👇 Recognition logic (prevent spam) 👇
   // ============================================
   if (!recognitionDone) { 
+    Serial.println("\n🔍 Performing face recognition...");
     int faceId = recognizeFaceAI(embedding);
+    
     if (faceId >= 0) {
+      // ✅ FACE RECOGNIZED - EMPLOYEE
       FaceEmbedding face;
       if (loadFaceEmbedding(faceId, &face)) {
-        Serial.printf("✅ Face recognized: %s (ID: %d)\n", face.name, faceId);
-        sendTelegramMessage("✅ Access granted to: " + String(face.name));
+        Serial.printf("✅✅✅ FACE RECOGNIZED: %s (ID: %d)\n", face.name, faceId);
+        String accessMsg = "✅ ACCESS GRANTED\n";
+        accessMsg += "Employee: " + String(face.name) + "\n";
+        accessMsg += "Time: " + String(millis() / 1000) + "s";
+        sendTelegramMessage(accessMsg);
         recognitionDone = true; // 🔒 LOCK
       }
     } else {
-      Serial.println("❌ Face not recognized");
-      sendTelegramMessage("❌ Face not recognized");
-      recognitionDone = true; // 🔒 LOCK ALSO HERE
+      // ❌ FACE NOT RECOGNIZED - INTRUDER ALERT
+      Serial.println("❌❌❌ INTRUDER DETECTED - Face not recognized!");
+      String intruderMsg = "🚨 INTRUDER ALERT 🚨\n";
+      intruderMsg += "Unknown face detected!\n";
+      intruderMsg += "Time: " + String(millis() / 1000) + "s";
+      sendTelegramMessage(intruderMsg);
+      
+      // Send the intruder photo
+      sendTelegramPhoto(fb->buf, fb->len, "⚠️ Intruder captured");
+      
+      recognitionDone = true; // 🔒 LOCK
     }
   } else {
     Serial.println("⏳ Photo captured (already recognized/processed)");

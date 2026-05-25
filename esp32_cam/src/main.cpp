@@ -60,8 +60,8 @@ void loop() {
     lastTelegramHandle = millis();
   }
   
-  // ✅ NEW: Continuous face detection with Telegram alerts
-  handleFaceDetection();
+  // ❌ DISABLED: Continuous face detection - only triggered by RFID badge
+  // handleFaceDetection();
   
   // ✅ CRITICAL: Handle web server FREQUENTLY so /authorize responds immediately
   server.handleClient();
