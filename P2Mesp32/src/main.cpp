@@ -253,6 +253,9 @@ void loop() {
     case STATE_ACCESS_GRANTED: {
       // On first entry to this state, trigger gate/servo
       if (justEnteredState) {
+        // FIX: Cancel camera request timeout to prevent false denial
+        resetCameraComm();  // Clear pending camera request state
+        
         Serial.println("\n🔓 OPENING GATE...");
         Serial.println("📌 [TODO] Trigger servo motor here!");
         logAccessEvent(true, currentUID);  // Log to Blynk
@@ -275,6 +278,8 @@ void loop() {
     case STATE_ACCESS_DENIED: {
       // Log denied access on first entry
       if (justEnteredState) {
+        // FIX: Cancel camera request to prevent lingering timeouts
+        resetCameraComm();  // Clear pending camera request state
         logAccessEvent(false, currentUID);  // Log to Blynk
       }
       

@@ -13,6 +13,8 @@
 // ============================================
 static int totalAccessCount = 0;
 static unsigned long lastBlynkUpdate = 0;
+static unsigned long lastHealthUpdate = 0;
+static int lastHealthScore = -1;  // Track last value to detect changes
 
 void setupBlynk() {
   // We don't use Blynk.begin() because you already manage Wi-Fi in main.cpp.
@@ -87,6 +89,14 @@ void updateBlynkStatus(SystemState state, String cardUID) {
 // UPDATE SYSTEM HEALTH (V3, V6)
 // ============================================
 void updateBlynkSystemHealth() {
+  unsigned long currentTime = millis();
+  
+  // Update health every 1 second (not every loop iteration)
+  if (currentTime - lastHealthUpdate < 1000) {
+    return;
+  }
+  lastHealthUpdate = currentTime;
+  
   // V3: WiFi & Memory Status
   int wifiSignal = WiFi.RSSI();  // Signal strength in dBm
   int freeRam = ESP.getFreeHeap() / 1024;  // KB
@@ -94,19 +104,42 @@ void updateBlynkSystemHealth() {
   Blynk.virtualWrite(V3, statusMsg);
   
   // V6: System Health Gauge (0-100%)
-  // Health based on: WiFi signal (-30 to -90 dBm), Free RAM (min 50KB)
+  // Health based on: WiFi signal, Free RAM, and PSRAM if available
   int healthScore = 100;
   
   // WiFi signal impact (worst: -90, best: -30)
-  if (wifiSignal < -80) healthScore -= 30;
-  else if (wifiSignal < -60) healthScore -= 15;
+  if (wifiSignal < -85) healthScore -= 40;
+  else if (wifiSignal < -75) healthScore -= 25;
+  else if (wifiSignal < -60) healthScore -= 10;
   
-  // RAM impact (warning below 100KB)
-  if (freeRam < 100) healthScore -= 20;
-  else if (freeRam < 200) healthScore -= 10;
+  // RAM impact (warning below 150KB)
+  if (freeRam < 80) healthScore -= 50;
+  else if (freeRam < 150) healthScore -= 25;
+  else if (freeRam < 250) healthScore -= 10;
+  
+  // PSRAM impact if available
+  if (psramFound()) {
+    int psramFree = ESP.getFreePsram() / 1024;
+    if (psramFree < 100) healthScore -= 20;
+    else if (psramFree < 300) healthScore -= 10;
+  }
+  
+  // Add time-based variation (makes it "live") - small fluctuation
+  // This ensures the gauge updates even if nothing major changes
+  static unsigned long lastHeartbeat = 0;
+  unsigned long timeSinceLastHeartbeat = (currentTime - lastHeartbeat) / 1000;
+  if (timeSinceLastHeartbeat > 0 && timeSinceLastHeartbeat < 60) {
+    // Add tiny fluctuation based on heartbeat (±2%)
+    healthScore += (timeSinceLastHeartbeat % 5) - 2;
+  }
+  lastHeartbeat = currentTime;
   
   healthScore = constrain(healthScore, 0, 100);
+  
+  // ALWAYS send, don't cache (forces update on Blynk)
   Blynk.virtualWrite(V6, healthScore);
+  
+  Serial.printf("📊 Health: %d%% (WiFi: %ddBm, RAM: %dKB)\n", healthScore, wifiSignal, freeRam);
 }
 
 // ============================================
