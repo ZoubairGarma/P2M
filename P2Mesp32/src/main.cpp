@@ -19,7 +19,7 @@ const char* password = "zoubaxd55";
 // TIMING CONSTANTS (All in milliseconds)
 // ============================================
 const unsigned long CAR_DETECTION_WINDOW = 10000;  // 10 seconds to scan card
-const unsigned long CAM_RESPONSE_TIMEOUT = 8000;   // 8 seconds to get response from CAM
+const unsigned long CAM_RESPONSE_TIMEOUT = 40000;   // 40 seconds - face recognition is slow!
 const unsigned long GATE_OPEN_DURATION = 5000;     // Gate stays open for 5 seconds
 const unsigned long INTER_CAR_COOLDOWN = 3000;     // Wait 3 seconds before next car
 const unsigned long WIFI_RECONNECT_INTERVAL = 5000; // Try WiFi reconnect every 5 seconds
@@ -206,6 +206,7 @@ void loop() {
     case STATE_RFID_SCANNED: {
       if (isAuthorized(currentUID)) {
         Serial.println("✅ Card is authorized! Requesting image from ESP32-CAM...");
+        resetCameraComm();  // FIX: Reset camera state from any previous request
         requestFaceScan();  // Send non-blocking request (FIX: Now properly non-blocking)
         setState(STATE_REQUESTING_CAM);
       } else {
