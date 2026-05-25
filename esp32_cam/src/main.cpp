@@ -96,8 +96,17 @@ void setup() {
 }
 
 void loop() {
-  thing.handle();
+  // FIX: Don't block on Telegram every loop iteration
+  // Only handle Thinger connection every 500ms
+  static unsigned long lastThingerHandle = 0;
+  if (millis() - lastThingerHandle > 500) {
+    thing.handle();
+    lastThingerHandle = millis();
+  }
+  
+  // ✅ CRITICAL: Handle web server FREQUENTLY so /authorize responds immediately
   server.handleClient();
+  delay(10);  // Yield to other tasks briefly
   
   // ============================================
   // 🔄 MONITORING AUTOMATIQUE RFID
