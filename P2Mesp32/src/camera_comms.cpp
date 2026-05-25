@@ -8,9 +8,9 @@
 // CONFIGURATION - ALIGNED TIMEOUTS
 // ============================================
 String camIP = "10.93.156.1";  // Replace with your ESP32-CAM's IP
-const int HTTP_CONNECT_TIMEOUT_MS = 5000;   // 5s to connect (increased from 3s)
-const int HTTP_RESPONSE_TIMEOUT_MS = 10000;  // 10s to get response (increased from 6s)
-const unsigned long REQUEST_TOTAL_TIMEOUT_MS = 12000;  // 12s total (must be >= HTTP_RESPONSE_TIMEOUT_MS)
+const int HTTP_CONNECT_TIMEOUT_MS = 8000;   // 5s to connect (increased from 3s)
+const int HTTP_RESPONSE_TIMEOUT_MS = 15000;  // 10s to get response (increased from 6s)
+const unsigned long REQUEST_TOTAL_TIMEOUT_MS = 17000;  // 12s total (must be >= HTTP_RESPONSE_TIMEOUT_MS)
 
 // ============================================
 // STATE MACHINE & HTTP MANAGEMENT
