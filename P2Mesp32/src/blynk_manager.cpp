@@ -138,8 +138,6 @@ void updateBlynkSystemHealth() {
   
   // ALWAYS send, don't cache (forces update on Blynk)
   Blynk.virtualWrite(V6, healthScore);
-  
-  Serial.printf("📊 Health: %d%% (WiFi: %ddBm, RAM: %dKB)\n", healthScore, wifiSignal, freeRam);
 }
 
 // ============================================
