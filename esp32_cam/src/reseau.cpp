@@ -59,166 +59,98 @@ void initialiserWiFi() {
 }
 
 void initialiserServeurWeb() {
-  server.on("/", HTTP_GET, []() {
-    server.send(200, "text/plain", "Camera prete.");
-  });
-
-  // ============================================
-  // 🔄 ENDPOINT RFID DU WROVER
-  // ============================================
-  server.on("/rfid/trigger", HTTP_GET, []() {
-    Serial.println("\n🚀 Endpoint /rfid/trigger appelé par WROVER!");
-    rfidDetected = true;
-    rfidDetectedTimestamp = millis();
-    recognitionDone = false; // reset recognition lock for this new RFID event
-    startPhotoCaptureSeries();
-    Serial.println("✅ rfidDetected = true - Capture série démarrée immédiatement !");
-    Serial.printf("   captureSeriesActive=%d, enrollMode=%d\n", captureSeriesActive, enrollMode);
-    server.send(200, "text/plain", "RFID_TRIGGERED");
-  });
-
-  // ============================================
-  // 📝 ENDPOINT ENRÔLEMENT MANUEL (HTTP)
-  // ============================================
-  server.on("/enroll", HTTP_GET, []() {
-    String name = server.arg("name");
-    if (name.length() == 0) {
-      server.send(400, "text/plain", "Paramètre 'name' requis");
-      return;
-    }
-    
-    Serial.printf("\n📝 Enrôlement HTTP demandé: %s\n", name.c_str());
-    enrollMode = true;
-    enrollingEmployeeName = name;
-    captureSeriesActive = true;
-    captureSeriesStartTime = millis();
-    
-    server.send(200, "text/plain", "Enrôlement lancé pour: " + name);
-  });
-
-  // Routes existantes
-  server.on("/photo", HTTP_GET, []() {
-    server.send(200, "text/plain", "Photos capturées automatiquement au RFID");
-  });
-  
-  // ============================================
-  // 🔐 MAIN AUTHORIZATION ENDPOINT (COMPLETELY CORRECTED)
-  // ============================================
-  server.on("/authorize", HTTP_GET, []() {
-    Serial.println("\n🚀 Endpoint /authorize - Face AI Recognition");
+server.on("/authorize", HTTP_GET, []() {
+    Serial.println("\n🚀 Endpoint /authorize - Starting Face AI Series...");
     
     unsigned long recognitionStartTime = millis();
-    
-    // ============================================
-    // STEP 1: Capture photo
-    // ============================================
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("❌ Camera capture failed");
-      server.send(500, "text/plain", "Camera capture failed");
-      return;
-    }
-    
-    // ============================================
-    // STEP 2: Detect face (optional pre-check)
-    // ============================================
-    FaceDetectionResult detection = detectFaceAI(fb);
-    if (!detection.detected) {
-      Serial.println("⚠️  No face detected in image");
-      esp_camera_fb_return(fb);
-      server.send(400, "text/plain", "No face detected");
-      return;
-    }
-    
-    // ============================================
-    // STEP 3: Extract face embedding using AI
-    // ============================================
-    float embedding[FACE_EMBEDDING_SIZE];
-    if (!extractFaceEmbedding(fb, embedding)) {
-      Serial.println("❌ Failed to extract face embedding");
-      esp_camera_fb_return(fb);
-      server.send(500, "text/plain", "Face embedding extraction failed");
-      return;
-    }
-    
-    unsigned long extractTime = millis() - recognitionStartTime;
-    if (extractTime > MAX_FACE_RECOGNITION_TIME_MS) {
-      Serial.println("⏰ Face processing timeout!");
-      esp_camera_fb_return(fb);
-      server.send(500, "text/plain", "Face processing timeout");
-      return;
-    }
-    
-    // ============================================
-    // STEP 4: Recognize face (compare embeddings)
-    // ============================================
-    int faceIndex = recognizeFaceAI(embedding);
-    unsigned long totalTime = millis() - recognitionStartTime;
-    
-    Serial.printf("⏱️  Face recognition completed in %ld ms\n", totalTime);
-    
-    // ============================================
-    // STEP 5: Handle result
-    // ============================================
-    if (faceIndex >= 0) {
-      // Face recognized ✅
-      FaceEmbedding face;
-      if (!loadFaceEmbedding(faceIndex, &face)) {
-        Serial.println("❌ Failed to load face from NVS");
+    bool faceRecognized = false;
+    String recognizedName = "";
+    bool intruderPhotoSaved = false;
+
+    // 📸 We take a SERIES of up to 5 pictures (giving the user 3-5 seconds to look at the camera)
+    for (int tries = 1; tries <= 5; tries++) {
+      Serial.printf("\n📸 Attempt %d/5...\n", tries);
+      
+      camera_fb_t* fb = esp_camera_fb_get();
+      
+      // WORKAROUND: If camera is sleepy or busy, clear it and retry
+      if (!fb) {
+        Serial.println("⚠️ Camera busy or asleep, retrying in 200ms...");
+        delay(200);
+        continue; // Skip to next attempt
+      }
+
+      // STEP 1: Detect face in this specific photo
+      FaceDetectionResult detection = detectFaceAI(fb);
+      if (!detection.detected) {
+        Serial.println("⚠️ No face detected in this frame.");
+        esp_camera_fb_return(fb); // ALWAYS return buffer
+        delay(200);
+        continue;
+      }
+
+      // STEP 2: Extract face embedding
+      float embedding[FACE_EMBEDDING_SIZE];
+      if (!extractFaceEmbedding(fb, embedding)) {
+        Serial.println("⚠️ AI Extraction failed.");
         esp_camera_fb_return(fb);
-        server.send(500, "text/plain", "Face load from NVS failed");
-        return;
+        delay(200);
+        continue;
+      }
+
+      // STEP 3: Recognize face
+      int faceIndex = recognizeFaceAI(embedding);
+      if (faceIndex >= 0) {
+        FaceEmbedding face;
+        if (loadFaceEmbedding(faceIndex, &face)) {
+          faceRecognized = true;
+          recognizedName = String(face.name);
+          esp_camera_fb_return(fb);
+          break; // SUCCESS! Break out of the 5-photo loop immediately!
+        }
       }
       
-      Serial.printf("✅ FACE RECOGNIZED: %s (ID: %d)\n", face.name, faceIndex);
+      // STEP 4: If we are at try 5 and STILL unknown, save the photo as an intruder
+      if (tries == 5) {
+         Serial.println("❌ All attempts failed. Saving intruder photo...");
+         String b64 = base64_encode(fb->buf, fb->len);
+         derniereImageBase64 = "data:image/jpeg;base64," + b64;
+         intruderPhotoSaved = true;
+      }
+      
+      esp_camera_fb_return(fb); // Clear the pipe for the next photo
+      delay(200); // Small pause before next shot
+    }
+
+    // ============================================
+    // FINAL VERDICT AFTER THE SERIES OF PHOTOS
+    // ============================================
+    if (faceRecognized) {
+      Serial.printf("✅ FACE RECOGNIZED: %s\n", recognizedName.c_str());
       
       // Telegram notification
-      String msg = "✅ Access granted to " + String(face.name);
+      String msg = "✅ Access granted to " + recognizedName;
       sendTelegramMessage(msg);
       
-      esp_camera_fb_return(fb);
-      delay(50);
-      
+      // Tell WROVER to open the gate
       server.send(200, "text/plain", "FACE_OK");
     } else {
-      // Unknown face - ALERT ❌
-      Serial.println("⚠️  UNKNOWN FACE - ALERT");
+      Serial.println("⚠️ UNKNOWN FACE OR NO FACE - ACCESS DENIED");
       
-      // Send photo to Thinger
-      String b64 = base64_encode(fb->buf, fb->len);
-      derniereImageBase64 = "data:image/jpeg;base64," + b64;
-      alerteIntrus = true;
+      alerteIntrus = true; // Tell main.cpp to send to Thinger
       
-      // Telegram alert
-      sendTelegramMessage("⚠️ ALERT: Unknown face detected! Photo recorded.");
+      if (intruderPhotoSaved) {
+        sendTelegramMessage("⚠️ ALERT: Access Denied! Unrecognized person. Photo recorded.");
+      } else {
+        sendTelegramMessage("⚠️ ALERT: Access Denied! (Person moved away or camera failed)");
+      }
       
-      esp_camera_fb_return(fb);
-      delay(50);
-      
+      // Tell WROVER to keep gate closed
       server.send(401, "text/plain", "FACE_UNKNOWN");
     }
-  });
-
-  // Route pour servir l'image
-  server.on("/image", HTTP_GET, []() {
-    Serial.println(">>> /image requested!");
-    camera_fb_t * fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("❌ Erreur capture pour /image");
-      server.send(500, "text/plain", "Image capture failed");
-      return;
-    }
-    Serial.printf("Image capturée: %d bytes\n", fb->len);
-    WiFiClient client = server.client();
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: image/jpeg");
-    client.println("Connection: close");
-    client.printf("Content-Length: %d\r\n", fb->len);
-    client.println();
-    client.write(fb->buf, fb->len);
-    esp_camera_fb_return(fb);  // FIX: Explicit frame buffer return
-    delay(50);  // FIX: Let PSRAM settle
-    Serial.println("Image envoyée!");
+    
+    unsigned long totalTime = millis() - recognitionStartTime;
+    Serial.printf("⏱️ Authorization process finished in %ld ms\n", totalTime);
   });
 
   // ============================================
