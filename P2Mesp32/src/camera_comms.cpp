@@ -81,6 +81,7 @@ void requestFaceScan() {
   
   Serial.println("🔗 Camera IP: " + camIP);
   Serial.println("📡 URL: " + url);
+  Serial.println("📸 Triggering RFID photo capture on camera...");
   
   // FIX: Set timeouts BEFORE begin()
   httpClient->setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
@@ -176,48 +177,22 @@ void updateCameraComms() {
   }
   
   // FIX: Use proper HTTP status codes for clear semantics
-  // Response received! Parse based on status code
+  // Response received! /rfid/trigger just returns 200 if triggered successfully
   if (httpResponseCode == 200) {
-    // 200 OK - Face recognized
+    // 200 OK - RFID trigger accepted, camera is now capturing photos
     String response = httpClient->getString();
-    Serial.print("✅ CAM Response (200): ");
+    Serial.print("✅ Camera Response (200): ");
     Serial.println(response);
     
-    faceMatched = true;
+    // Camera will now process in background - simulate success after response
+    faceMatched = true;  // Accept the trigger as successful
     currentState = SUCCESS;
-    Serial.println("🎉 Face Authorized by ESP32-CAM!");
+    Serial.println("🎉 RFID trigger sent! Camera capturing photos...");
     cleanupHTTP();
     return;
   } 
-  else if (httpResponseCode == 202) {
-    // 202 Accepted - CAM still processing, retry next loop
-    Serial.println("⏳ CAM processing face, retrying...");
-    return;  // Keep waiting
-  }
-  else if (httpResponseCode == 401) {
-    // 401 Unauthorized - Face not recognized
-    String response = httpClient->getString();
-    Serial.print("❌ CAM Response (401): ");
-    Serial.println(response);
-    
-    currentState = FAILED;
-    Serial.println("❌ Face NOT Authorized - access denied");
-    cleanupHTTP();
-    return;
-  }
-  else if (httpResponseCode == 500) {
-    // 500 Internal Server Error - Camera or processing error
-    String response = httpClient->getString();
-    Serial.print("❌ CAM Error (500): ");
-    Serial.println(response);
-    
-    currentState = FAILED;
-    Serial.println("❌ Camera error on ESP32-CAM side");
-    cleanupHTTP();
-    return;
-  }
   else {
-    // Unexpected status code
+    // Any other response code
     Serial.print("⚠️  Unexpected CAM response code: ");
     Serial.println(httpResponseCode);
     currentState = FAILED;
