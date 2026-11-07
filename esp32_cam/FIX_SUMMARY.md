@@ -166,7 +166,7 @@ From `src/config.h`:
 #define PHOTO_CAPTURE_DURATION_MS 5000  // Duration of capture series (5 seconds)
 #define PHOTO_INTERVAL_MS 500           // Interval between photos (500ms = 2 photos/sec)
 #define MIN_FACE_MATCH_SCORE 0.55f      // Cosine similarity threshold (higher = stricter)
-#define CHAT_ID "6310642525"            // Your Telegram chat ID
+#define CHAT_ID "YOUR_CHAT_ID"            // Your Telegram chat ID
 #define BOT_TOKEN "8711..."             // Your Telegram bot token
 ```
 

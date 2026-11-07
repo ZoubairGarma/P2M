@@ -18,8 +18,9 @@ extern unsigned long rfidDetectedTimestamp;
 #define PHOTO_INTERVAL_MS 500           // Intervalle entre chaque photo (500ms = 2 photos/sec)
 
 // --- TELEGRAM CONFIG ---
-#define BOT_TOKEN "8711297172:AAEO2IPOrnmCc_6KpJKaLsgtvt_C70qFFrQ"
-#define CHAT_ID "6310642525"
+#include "secrets.h"
+#define BOT_TOKEN SECRET_BOT_TOKEN
+#define CHAT_ID SECRET_CHAT_ID
 
 // --- RECONNAISSANCE FACIALE & NVS ---
 #define MAX_ENROLLED_FACES 10

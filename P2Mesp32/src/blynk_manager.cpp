@@ -3,7 +3,8 @@
 // BLYNK CREDENTIALS - MUST BE AT THE VERY TOP
 #define BLYNK_TEMPLATE_ID "TMPL28Hj90jCY"
 #define BLYNK_TEMPLATE_NAME "smart gate"
-#define BLYNK_AUTH_TOKEN "2Dbb0NIvOxFvIUDXVbiXHvSpmkWSqr5p"
+#include "secrets.h"
+#define BLYNK_AUTH_TOKEN SECRET_BLYNK_AUTH_TOKEN
 
 #include <WiFi.h>
 #include <BlynkSimpleEsp32.h>

@@ -308,6 +308,6 @@ void testCameraConnection() {
   Serial.println("\n🎥 To fix:");
   Serial.println("   1. Check ESP32-CAM startup logs for its actual IP");
   Serial.println("   2. Update camIP variable if needed");
-  Serial.println("   3. Verify both devices on same WiFi network (bartage)");
+  Serial.println("   3. Verify both devices on same WiFi network");
   Serial.println("==========================================\n");
 }

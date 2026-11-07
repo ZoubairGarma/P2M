@@ -32,8 +32,9 @@ unsigned long accessGrantedTimestamp = 0;
 bool rfidDetected = false;
 unsigned long rfidDetectedTimestamp = 0;
 
-const char* ssid = "bartage";
-const char* password = "zoubaxd55";
+#include "secrets.h"
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 void setup() {
   Serial.begin(115200);

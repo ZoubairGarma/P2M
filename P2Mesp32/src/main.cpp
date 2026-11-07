@@ -12,8 +12,9 @@
 // ============================================
 // NETWORK CREDENTIALS
 // ============================================
-const char* ssid = "bartage";
-const char* password = "zoubaxd55";
+#include "secrets.h"
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 // ============================================
 // TIMING CONSTANTS (All in milliseconds)

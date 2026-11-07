@@ -38,8 +38,8 @@ Refactored ESP32-WROVER (Brain) and ESP32-CAM (Eye) communication for robust, no
 
 Update these constants to match your environment:
 ```cpp
-const char* ssid = "bartage";              // Your WiFi SSID
-const char* password = "zoubaxd55";        // Your WiFi password
+const char* ssid = "YOUR_WIFI_SSID";              // Your WiFi SSID
+const char* password = "YOUR_WIFI_PASSWORD";        // Your WiFi password
 
 // Timing (in milliseconds)
 const unsigned long CAR_DETECTION_WINDOW = 10000;   // Time to scan card
@@ -76,8 +76,8 @@ Update credentials:
 
 Update network:
 ```cpp
-const char* ssid = "bartage";
-const char* password = "zoubaxd55";
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 ```
 
 ---
@@ -197,7 +197,7 @@ const char* password = "zoubaxd55";
 ================================
 
 📍 Initializing hardware sensors...
-🔗 Connecting to Wi-Fi: bartage
+🔗 Connecting to Wi-Fi: YOUR_WIFI_SSID
 ✅ Connected! IP: 192.168.1.100
 ☁️  Initializing Blynk connection...
 
@@ -225,7 +225,7 @@ const char* password = "zoubaxd55";
 🎥 ESP32-CAM SYSTEM STARTING
 ================================
 
-🔗 Connecting to WiFi: bartage
+🔗 Connecting to WiFi: YOUR_WIFI_SSID
 ✅ WiFi Connected! IP: 10.32.245.1
 ✅ HTTP Server started on port 80
 📸 Waiting for /authorize request from WROVER...
